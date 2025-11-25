@@ -226,6 +226,7 @@ if not df_consumo.empty:
                     labels={'dia_nombre': 'Día', 'consumo_kwh': 'Consumo Promedio (kWh)'}
                 )
                 col2.plotly_chart(fig_semanal, use_container_width=True)
+
             # --- Correlación Clima ---
             if not df_clima.empty:
                 st.markdown("---")
@@ -236,10 +237,31 @@ if not df_consumo.empty:
                 
                 if not df_merged.empty:
                     c1, c2 = st.columns(2)
-                    c1.plotly_chart(px.scatter(df_merged, x='temperatura_c', y='consumo_kwh', title="Consumo vs Temperatura", trendline="ols"),trendline_color_override="red", use_container_width=True)
-                    c2.plotly_chart(px.scatter(df_merged, x='humedad_relativa', y='consumo_kwh', title="Consumo vs Humedad", trendline="ols"),trendline_color_override="red", use_container_width=True)
+                    
+                    # Gráfico 1: Temperatura (Trendline ROJA)
+                    fig_temp = px.scatter(
+                        df_merged, 
+                        x='temperatura_c', 
+                        y='consumo_kwh', 
+                        title="Consumo vs Temperatura", 
+                        trendline="ols", 
+                        trendline_color_override="red"  # <--- Aquí cambias el color
+                    )
+                    c1.plotly_chart(fig_temp, use_container_width=True)
+                    
+                    # Gráfico 2: Humedad (Trendline ROJA)
+                    fig_hum = px.scatter(
+                        df_merged, 
+                        x='humedad_relativa', 
+                        y='consumo_kwh', 
+                        title="Consumo vs Humedad", 
+                        trendline="ols", 
+                        trendline_color_override="red"  # <--- Aquí cambias el color
+                    )
+                    c2.plotly_chart(fig_hum, use_container_width=True)
                 else:
                     st.info("No hay coincidencia de fechas entre consumo y clima para los filtros seleccionados.")
+                    
     else:
         st.info("Seleccione un rango de fecha completo (Inicio y Fin).")
 else:
