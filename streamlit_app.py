@@ -205,13 +205,27 @@ if not df_consumo.empty:
             col1.plotly_chart(px.bar(perfil_horario, x='fecha', y='consumo_kwh', title="Perfil Diario Promedio", labels={'fecha': 'Hora'}), use_container_width=True)
             
             # Perfil Semanal (Solo si hay datos)
-            perfil_semanal = df_filtered.groupby(df_filtered['fecha'].dt.dayofweek)['consumo_kwh'].mean()
+            perfil_semanal = df_filtered.groupby(df_filtered['fecha'].dt.dayofweek)['consumo_kwh'].mean().reset_index()
+            
             if not perfil_semanal.empty:
-                perfil_semanal.index = perfil_semanal.index.map(dias)
-                # Reordenar correctamente
-                perfil_semanal = perfil_semanal.reindex([dias[i] for i in sorted(dias.keys()) if i in perfil_semanal.index])
-                col2.plotly_chart(px.bar(perfil_semanal, title="Perfil Semanal Promedio"), use_container_width=True)
-
+                # 2. Renombrar columnas para claridad
+                perfil_semanal.columns = ['dia_num', 'consumo_kwh']
+                
+                # 3. Mapear el número (0,1...) al nombre (Lunes, Martes...)
+                perfil_semanal['dia_nombre'] = perfil_semanal['dia_num'].map(dias)
+                
+                # 4. Ordenar por número de día para que salgan Lunes-Domingo y no alfabéticamente
+                perfil_semanal = perfil_semanal.sort_values('dia_num')
+                
+                # 5. Graficar pasando explícitamente X e Y
+                fig_semanal = px.bar(
+                    perfil_semanal, 
+                    x='dia_nombre', 
+                    y='consumo_kwh', 
+                    title="Perfil Semanal Promedio",
+                    labels={'dia_nombre': 'Día', 'consumo_kwh': 'Consumo Promedio (kWh)'}
+                )
+                col2.plotly_chart(fig_semanal, use_container_width=True)
             # --- Correlación Clima ---
             if not df_clima.empty:
                 st.markdown("---")
@@ -222,8 +236,8 @@ if not df_consumo.empty:
                 
                 if not df_merged.empty:
                     c1, c2 = st.columns(2)
-                    c1.plotly_chart(px.scatter(df_merged, x='temperatura_c', y='consumo_kwh', title="Consumo vs Temperatura", trendline="ols"), use_container_width=True)
-                    c2.plotly_chart(px.scatter(df_merged, x='humedad_relativa', y='consumo_kwh', title="Consumo vs Humedad", trendline="ols"), use_container_width=True)
+                    c1.plotly_chart(px.scatter(df_merged, x='temperatura_c', y='consumo_kwh', title="Consumo vs Temperatura", trendline="ols"),trendline_color_override="red", use_container_width=True)
+                    c2.plotly_chart(px.scatter(df_merged, x='humedad_relativa', y='consumo_kwh', title="Consumo vs Humedad", trendline="ols"),trendline_color_override="red", use_container_width=True)
                 else:
                     st.info("No hay coincidencia de fechas entre consumo y clima para los filtros seleccionados.")
     else:
