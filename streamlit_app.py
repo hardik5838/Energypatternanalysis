@@ -5,6 +5,7 @@ import requests
 import numpy as np
 import os
 from urllib.parse import quote  # Importación necesaria para corregir URLs con espacios
+import nilm_calculator
 
 # --- Configuración de la página ---
 st.set_page_config(page_title="Dashboard Energético Asepeyo", page_icon="⚡", layout="wide")
@@ -84,7 +85,7 @@ def load_nasa_weather_data(file_path):
 # --- Barra Lateral ---
 with st.sidebar:
     st.title('⚡ Panel de Control')
-    
+    page = st.selectbox("Seleccionar Herramienta", ["Dashboard General", "Simulación NILM (Avanzado)"])
     source_type = st.radio("Fuente de datos", ["Cargar Archivos", "Desde GitHub"])
     
     df_consumo = pd.DataFrame()
@@ -172,6 +173,8 @@ with st.sidebar:
         umbral_pico = st.number_input("Percentil Picos", value=99.0, min_value=90.0, max_value=100.0)
 
 # --- Lógica Principal ---
+
+if page == "Dashboard General":
 st.title("Dashboard Energético")
 
 if not df_consumo.empty:
@@ -266,3 +269,13 @@ if not df_consumo.empty:
         st.info("Seleccione un rango de fecha completo (Inicio y Fin).")
 else:
     st.info("Carga archivos para comenzar o selecciona 'Desde GitHub'.")
+
+
+
+
+elif page == "Simulación NILM (Avanzado)":
+    # LLAMAMOS AL NUEVO MÓDULO
+    nilm_calculator.show_nilm_page(df_consumo, df_clima)
+
+else:
+    st.info("Carga archivos para comenzar.")
