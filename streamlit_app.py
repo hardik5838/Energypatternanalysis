@@ -4,6 +4,7 @@ import plotly.express as px
 import requests
 import numpy as np
 import os
+from urllib.parse import quote  # Importación necesaria para corregir URLs con espacios
 
 # --- Configuración de la página ---
 st.set_page_config(page_title="Dashboard Energético Asepeyo", page_icon="⚡", layout="wide")
@@ -97,35 +98,47 @@ with st.sidebar:
             # Guardar temporalmente para usar la función que pide 'file_path' o pasar objeto
             df_consumo = load_asepeyo_energy_data(uploaded_energy)
         if uploaded_weather:
-            df_clima = load_nasa_weather_data(uploaded_weather) # Nota: La función load_nasa necesitaría ajuste para aceptar objeto file-like si se usa uploader directo, pero para simplicidad asumimos la lógica de lectura directa o adaptada.
-            # *Corrección rápida para uploader directo en load_nasa_weather_data*:
-            # La función arriba espera un path o URL. Para uploader de Streamlit:
-            if uploaded_weather:
-                import io
-                content = uploaded_weather.getvalue().decode("utf-8")
-                # Buscar cabecera
-                lines = content.splitlines()
-                start = 0
-                for i, l in enumerate(lines):
-                    if "YEAR,MO,DY,HR" in l:
-                        start = i
-                        break
-                df_clima_raw = pd.read_csv(io.StringIO("\n".join(lines[start:])))
-                # ... (resto del procesamiento igual que la función)
-                df_clima_raw['fecha'] = pd.to_datetime(df_clima_raw[['YEAR', 'MO', 'DY', 'HR']].astype(str).agg('-'.join, axis=1), format='%Y-%m-%d-%H')
-                df_clima_raw.rename(columns={'T2M': 'temperatura_c', 'RH2M': 'humedad_relativa'}, inplace=True)
-                df_clima = df_clima_raw[['fecha', 'temperatura_c', 'humedad_relativa']]
+            # Lógica para uploader directo de clima
+            import io
+            content = uploaded_weather.getvalue().decode("utf-8")
+            lines = content.splitlines()
+            start = 0
+            for i, l in enumerate(lines):
+                if "YEAR,MO,DY,HR" in l:
+                    start = i
+                    break
+            df_clima_raw = pd.read_csv(io.StringIO("\n".join(lines[start:])))
+            df_clima_raw['fecha'] = pd.to_datetime(df_clima_raw[['YEAR', 'MO', 'DY', 'HR']].astype(str).agg('-'.join, axis=1), format='%Y-%m-%d-%H')
+            df_clima_raw.rename(columns={'T2M': 'temperatura_c', 'RH2M': 'humedad_relativa'}, inplace=True)
+            df_clima = df_clima_raw[['fecha', 'temperatura_c', 'humedad_relativa']]
 
     else:
-        # URLs directas ("Raw") a tus archivos en GitHub
-        # REEMPLAZA ESTO CON TUS URLs REALES SI CAMBIAN
-        base_url = "https://raw.githubusercontent.com/hardik5838/EnergyPatternAnalysis/main/Data/"
+        # --- SECCIÓN CORREGIDA PARA GITHUB ---
+        # 1. URL base corregida a minúsculas (/data/)
+        base_url = "https://raw.githubusercontent.com/hardik5838/EnergyPatternAnalysis/main/data/"
+        
         file_energy = "251003 ASEPEYO - Curva de consumo ES0031405968956002BN.xlsx - Lecturas.csv"
         file_weather = "POWER_Point_Hourly_20230401_20250831_041d38N_002d18E_LST.csv"
         
-        st.info("Cargando archivos predefinidos desde GitHub...")
-        df_consumo = load_asepeyo_energy_data(base_url + file_energy)
-        df_clima = load_nasa_weather_data(base_url + file_weather)
+        st.info("Conectando con GitHub...")
+        
+        # 2. Codificación de URL para manejar espacios (%20)
+        url_energy = base_url + quote(file_energy)
+        url_weather = base_url + quote(file_weather)
+        
+        df_consumo = load_asepeyo_energy_data(url_energy)
+        df_clima = load_nasa_weather_data(url_weather)
+        
+        # 3. Debugging en caso de fallo
+        if df_consumo.empty:
+             st.error("❌ Fallo al cargar datos de Consumo.")
+             with st.expander("Ver URL de Consumo generada"):
+                 st.code(url_energy, language='text')
+                 
+        if df_clima.empty:
+             st.warning("⚠️ Fallo al cargar datos de Clima.")
+             with st.expander("Ver URL de Clima generada"):
+                 st.code(url_weather, language='text')
 
     # --- Filtros Globales ---
     if not df_consumo.empty:
@@ -148,7 +161,12 @@ with st.sidebar:
         st.markdown("---")
         st.header("Opciones Avanzadas")
         remove_base = st.checkbox("Eliminar Consumo Base (Outliers bajos)")
-        umbral_base = st.number_input("Umbral Base (kWh)", value=float(df_consumo['consumo_kwh'].quantile(0.1)))
+        # Manejo seguro del quantile si hay pocos datos
+        if not df_consumo.empty:
+            val_base = float(df_consumo['consumo_kwh'].quantile(0.1))
+        else:
+            val_base = 0.0
+        umbral_base = st.number_input("Umbral Base (kWh)", value=val_base)
         
         remove_peak = st.checkbox("Eliminar Picos (Outliers altos)")
         umbral_pico = st.number_input("Percentil Picos", value=99.0, min_value=90.0, max_value=100.0)
@@ -158,53 +176,57 @@ st.title("Dashboard Energético")
 
 if not df_consumo.empty:
     # Aplicar filtros
-    mask = (df_consumo['fecha'].dt.date >= date_range[0]) & (df_consumo['fecha'].dt.date <= date_range[1])
-    mask &= df_consumo['fecha'].dt.dayofweek.isin(sel_dias)
-    mask &= (df_consumo['fecha'].dt.hour >= sel_horas[0]) & (df_consumo['fecha'].dt.hour <= sel_horas[1])
-    
-    df_filtered = df_consumo[mask].copy()
-    
-    if remove_base:
-        df_filtered = df_filtered[df_filtered['consumo_kwh'] > umbral_base]
-    if remove_peak:
-        limit = df_filtered['consumo_kwh'].quantile(umbral_pico/100)
-        df_filtered = df_filtered[df_filtered['consumo_kwh'] < limit]
+    # Asegurar que date_range tenga 2 valores (inicio y fin)
+    if len(date_range) == 2:
+        mask = (df_consumo['fecha'].dt.date >= date_range[0]) & (df_consumo['fecha'].dt.date <= date_range[1])
+        mask &= df_consumo['fecha'].dt.dayofweek.isin(sel_dias)
+        mask &= (df_consumo['fecha'].dt.hour >= sel_horas[0]) & (df_consumo['fecha'].dt.hour <= sel_horas[1])
+        
+        df_filtered = df_consumo[mask].copy()
+        
+        if remove_base:
+            df_filtered = df_filtered[df_filtered['consumo_kwh'] > umbral_base]
+        if remove_peak:
+            limit = df_filtered['consumo_kwh'].quantile(umbral_pico/100)
+            df_filtered = df_filtered[df_filtered['consumo_kwh'] < limit]
 
-    if df_filtered.empty:
-        st.warning("Los filtros seleccionados no han devuelto datos.")
+        if df_filtered.empty:
+            st.warning("Los filtros seleccionados no han devuelto datos.")
+        else:
+            # --- Gráficos ---
+            st.subheader("Patrones de Consumo")
+            
+            # Evolución
+            st.plotly_chart(px.line(df_filtered, x='fecha', y='consumo_kwh', title="Evolución Temporal"), use_container_width=True)
+            
+            col1, col2 = st.columns(2)
+            # Perfil Diario
+            perfil_horario = df_filtered.groupby(df_filtered['fecha'].dt.hour)['consumo_kwh'].mean().reset_index()
+            col1.plotly_chart(px.bar(perfil_horario, x='fecha', y='consumo_kwh', title="Perfil Diario Promedio", labels={'fecha': 'Hora'}), use_container_width=True)
+            
+            # Perfil Semanal (Solo si hay datos)
+            perfil_semanal = df_filtered.groupby(df_filtered['fecha'].dt.dayofweek)['consumo_kwh'].mean()
+            if not perfil_semanal.empty:
+                perfil_semanal.index = perfil_semanal.index.map(dias)
+                # Reordenar correctamente
+                perfil_semanal = perfil_semanal.reindex([dias[i] for i in sorted(dias.keys()) if i in perfil_semanal.index])
+                col2.plotly_chart(px.bar(perfil_semanal, title="Perfil Semanal Promedio"), use_container_width=True)
+
+            # --- Correlación Clima ---
+            if not df_clima.empty:
+                st.markdown("---")
+                st.subheader("Correlación con Clima")
+                
+                # Unir datos
+                df_merged = pd.merge(df_filtered, df_clima, on='fecha', how='inner')
+                
+                if not df_merged.empty:
+                    c1, c2 = st.columns(2)
+                    c1.plotly_chart(px.scatter(df_merged, x='temperatura_c', y='consumo_kwh', title="Consumo vs Temperatura", trendline="ols"), use_container_width=True)
+                    c2.plotly_chart(px.scatter(df_merged, x='humedad_relativa', y='consumo_kwh', title="Consumo vs Humedad", trendline="ols"), use_container_width=True)
+                else:
+                    st.info("No hay coincidencia de fechas entre consumo y clima para los filtros seleccionados.")
     else:
-        # --- Gráficos ---
-        st.subheader("Patrones de Consumo")
-        
-        # Evolución
-        st.plotly_chart(px.line(df_filtered, x='fecha', y='consumo_kwh', title="Evolución Temporal"), use_container_width=True)
-        
-        col1, col2 = st.columns(2)
-        # Perfil Diario
-        perfil_horario = df_filtered.groupby(df_filtered['fecha'].dt.hour)['consumo_kwh'].mean().reset_index()
-        col1.plotly_chart(px.bar(perfil_horario, x='fecha', y='consumo_kwh', title="Perfil Diario Promedio", labels={'fecha': 'Hora'}), use_container_width=True)
-        
-        # Perfil Semanal (Solo si hay datos)
-        perfil_semanal = df_filtered.groupby(df_filtered['fecha'].dt.dayofweek)['consumo_kwh'].mean()
-        if not perfil_semanal.empty:
-            perfil_semanal.index = perfil_semanal.index.map(dias)
-            # Reordenar correctamente
-            perfil_semanal = perfil_semanal.reindex([dias[i] for i in sorted(dias.keys()) if i in perfil_semanal.index])
-            col2.plotly_chart(px.bar(perfil_semanal, title="Perfil Semanal Promedio"), use_container_width=True)
-
-        # --- Correlación Clima ---
-        if not df_clima.empty:
-            st.markdown("---")
-            st.subheader("Correlación con Clima")
-            
-            # Unir datos
-            df_merged = pd.merge(df_filtered, df_clima, on='fecha', how='inner')
-            
-            if not df_merged.empty:
-                c1, c2 = st.columns(2)
-                c1.plotly_chart(px.scatter(df_merged, x='temperatura_c', y='consumo_kwh', title="Consumo vs Temperatura", trendline="ols"), use_container_width=True)
-                c2.plotly_chart(px.scatter(df_merged, x='humedad_relativa', y='consumo_kwh', title="Consumo vs Humedad", trendline="ols"), use_container_width=True)
-            else:
-                st.info("No hay coincidencia de fechas entre consumo y clima para los filtros seleccionados.")
+        st.info("Seleccione un rango de fecha completo (Inicio y Fin).")
 else:
-    st.info("Carga archivos para comenzar.")
+    st.info("Carga archivos para comenzar o selecciona 'Desde GitHub'.")
