@@ -283,4 +283,3 @@ if __name__ == "__main__":
     df_clima = pd.DataFrame({'fecha': dates, 'temperatura_c': temps})
     
     show_nilm_page(df_consumo, df_clima)
-    
