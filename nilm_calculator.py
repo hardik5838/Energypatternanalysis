@@ -213,4 +213,4 @@ def show_nilm_page(df_consumo, df_clima):
     st.subheader("Energy Mix Estimate")
     res = df_sim[['sim_base', 'sim_vent', 'sim_thermal', 'sim_light', 'sim_med']].sum().reset_index()
     res.columns = ['Category', 'kWh']
-    st.plotly_chart(go.Figure(data=[go.Pie(labels=res['Category'], values=res['kWh'])]), use_container_width=True
+    st.plotly_chart(go.Figure(data=[go.Pie(labels=res['Category'], values=res['kWh'])]), use_container_width=True)
