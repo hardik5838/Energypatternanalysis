@@ -182,3 +182,4 @@ def show_nilm_page(df_consumo, df_clima):
         st.info("💡 **Consejo:** Tu gráfico real flota por encima del simulado. Sube la **Potencia Base** en el menú lateral.")
     elif df_sim['calc_total'].max() < df_sim['consumo_kwh'].max():
         st.info("💡 **Consejo:** Te falta altura en las horas centrales. Sube la **Carga por Actividad**.")
+
