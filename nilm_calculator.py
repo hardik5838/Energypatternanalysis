@@ -90,15 +90,18 @@ def run_simulation(df_avg, config):
 # ==========================================
 # 2. UI LAYOUT
 # ==========================================
-def show_dashboard(df_consumo, df_clima):
-    st.set_page_config(layout="wide", page_title="Load Calibrator")
-    
+def show_nilm_page(df_consumo, df_clima):
     # --- DATA PREP ---
     if df_consumo.empty: 
-        st.error("No Data"); return
+        st.error("No Data provided to calculator"); return
     
-    df_merged = pd.merge(df_consumo, df_clima, on='fecha', how='inner')
-    
+    # Merge and handle missing data safely
+    try:
+        df_merged = pd.merge(df_consumo, df_clima, on='fecha', how='inner')
+    except KeyError:
+        st.error("Error: Input data must have a 'fecha' column.")
+        return
+
     # --- SIDEBAR CONTROLS ---
     with st.sidebar:
         st.header("🎛️ Control Panel")
@@ -109,13 +112,14 @@ def show_dashboard(df_consumo, df_clima):
         mask = df_merged['fecha'].dt.dayofweek < 5 if is_weekday else df_merged['fecha'].dt.dayofweek >= 5
         df_filtered = df_merged[mask].copy()
         
-        if df_filtered.empty: st.warning("No data"); return
+        if df_filtered.empty: 
+            st.warning(f"No data found for {day_type}"); return
         
         # B. BASE
         with st.expander("1. Base & Vent", expanded=True):
-            base_kw = st.number_input("Base Load [kW]", 0, 500, 20)
+            base_kw = st.number_input("Base Load [kW]", 0.0, 1000.0, 20.0, step=1.0)
             st.markdown("**Ventilation**")
-            vent_kw = st.number_input("Vent kW", 0, 500, 30)
+            vent_kw = st.number_input("Vent kW", 0.0, 1000.0, 30.0, step=1.0)
             c1, c2 = st.columns(2)
             v_s, v_e = c1.slider("Vent Time", 0, 24, (6, 20))
             v_ru = c2.number_input("Ramp Up (h)", 0.0, 5.0, 0.5)
@@ -123,7 +127,7 @@ def show_dashboard(df_consumo, df_clima):
 
         # C. LIGHTING
         with st.expander("2. Lighting", expanded=False):
-            light_kw = st.number_input("Light kW", 0, 500, 20)
+            light_kw = st.number_input("Light kW", 0.0, 1000.0, 20.0, step=1.0)
             l_fac = st.slider("Factor %", 0.0, 1.0, 0.8)
             l_sec = st.slider("Security %", 0.0, 0.5, 0.1)
             c3, c4 = st.columns(2)
@@ -133,25 +137,28 @@ def show_dashboard(df_consumo, df_clima):
 
         # D. THERMAL
         with st.expander("3. HVAC Thermal", expanded=False):
-            therm_kw = st.number_input("Chiller kW", 0, 500, 45)
+            therm_kw = st.number_input("Chiller kW", 0.0, 2000.0, 45.0, step=5.0)
             t_s, t_e = st.slider("Therm Time", 0, 24, (8, 19))
             mode = st.selectbox("Mode", ["Constant", "Weather Driven"])
             sens, sc, sh = 5.0, 24, 20
             if mode == "Weather Driven":
-                sens = st.slider("Sens.", 1.0, 10.0, 5.0)
-                sc = st.number_input("Set Cool", 20, 30, 24)
+                sens = st.slider("Sens.", 1.0, 20.0, 5.0)
+                sc = st.number_input("Set Cool", 18, 30, 24)
                 sh = st.number_input("Set Heat", 15, 25, 20)
 
         # E. CUSTOM PROCESSES
         with st.expander("4. Custom Processes", expanded=False):
             if 'n_proc' not in st.session_state: st.session_state['n_proc'] = 1
-            if st.button("Add Process"): st.session_state['n_proc'] += 1
-            if st.button("Remove Last"): st.session_state['n_proc'] = max(0, st.session_state['n_proc'] - 1)
+            
+            # Process Management Buttons
+            b1, b2 = st.columns(2)
+            if b1.button("➕ Add"): st.session_state['n_proc'] += 1
+            if b2.button("➖ Remove"): st.session_state['n_proc'] = max(0, st.session_state['n_proc'] - 1)
             
             procs = []
             for i in range(st.session_state['n_proc']):
                 st.markdown(f"**Proc {i+1}**")
-                pk = st.number_input(f"kW {i+1}", 0.0, 200.0, 10.0, key=f"pk{i}")
+                pk = st.number_input(f"kW {i+1}", 0.0, 500.0, 10.0, key=f"pk{i}")
                 ps, pe = st.slider(f"Time {i+1}", 0, 24, (8, 17), key=f"pt{i}")
                 pr_u = st.number_input(f"R-Up {i+1}", 0.0, 5.0, 0.5, key=f"pru{i}")
                 pr_d = st.number_input(f"R-Dn {i+1}", 0.0, 5.0, 0.5, key=f"prd{i}")
@@ -161,6 +168,7 @@ def show_dashboard(df_consumo, df_clima):
                 dips = [{'hour': 14, 'factor': 0.5}] if has_dip else []
                 
                 procs.append({'name': f"P{i+1}", 'kw': pk, 's': ps, 'e': pe, 'ru': pr_u, 'rd': pr_d, 'dips': dips})
+                st.divider()
 
     # --- CALCULATION ---
     df_avg = df_filtered.groupby(df_filtered['fecha'].dt.hour).agg({
@@ -180,6 +188,7 @@ def show_dashboard(df_consumo, df_clima):
     # ==========================================
     # 3. MAIN DASHBOARD AREA
     # ==========================================
+    st.subheader(f"📊 Digital Twin Calibration ({day_type})")
     
     # METRICS ROW
     real = df_sim['consumo_kwh'].sum()
@@ -188,8 +197,8 @@ def show_dashboard(df_consumo, df_clima):
     
     c_kpi1, c_kpi2, c_kpi3 = st.columns(3)
     c_kpi1.metric("Real Energy", f"{real:,.0f} kWh")
-    c_kpi2.metric("Simulated Energy", f"{sim:,.0f} kWh", delta=f"{sim-real:,.0f}")
-    c_kpi3.metric("RMSE Error", f"{rmse:.2f}", help="Lower is better")
+    c_kpi2.metric("Simulated Energy", f"{sim:,.0f} kWh", delta=f"{sim-real:,.0f} kWh")
+    c_kpi3.metric("RMSE (Error)", f"{rmse:.2f}", help="Root Mean Square Error. Aim for < 5.0")
 
     # ROW 1: MAIN LOAD PROFILE CHART
     fig = go.Figure()
@@ -197,9 +206,9 @@ def show_dashboard(df_consumo, df_clima):
     
     # Stacked Areas
     layers = [
-        ('sim_base', 'Base', 'gray'),
+        ('sim_base', 'Base Load', 'gray'),
         ('sim_vent', 'Ventilation', '#3498db'),
-        ('sim_therm', 'Thermal', '#e74c3c'),
+        ('sim_therm', 'Thermal (HVAC)', '#e74c3c'),
         ('sim_light', 'Lighting', '#f1c40f'),
         ('sim_proc', 'Processes', '#e67e22')
     ]
@@ -207,9 +216,9 @@ def show_dashboard(df_consumo, df_clima):
         fig.add_trace(go.Scatter(x=x, y=df_sim[col], stackgroup='one', name=name, line=dict(width=0, color=color)))
         
     # Real Line
-    fig.add_trace(go.Scatter(x=x, y=df_sim['consumo_kwh'], mode='lines+markers', name='REAL', line=dict(color='black', width=3)))
+    fig.add_trace(go.Scatter(x=x, y=df_sim['consumo_kwh'], mode='lines+markers', name='REAL METER', line=dict(color='black', width=3)))
     
-    fig.update_layout(height=400, margin=dict(l=0, r=0, t=30, b=0), hovermode="x unified", legend=dict(orientation="h", y=1.02, x=0))
+    fig.update_layout(height=450, margin=dict(l=0, r=0, t=30, b=0), hovermode="x unified", legend=dict(orientation="h", y=1.02, x=0))
     st.plotly_chart(fig, use_container_width=True)
 
     # ROW 2: SPLIT VIEW (Pie Chart | Residuals)
@@ -217,13 +226,12 @@ def show_dashboard(df_consumo, df_clima):
     
     with col_left:
         # Pie Chart
-        # Summing specific columns
         sums = df_sim[['sim_base', 'sim_vent', 'sim_therm', 'sim_light', 'sim_proc']].sum().reset_index()
         sums.columns = ['Category', 'kWh']
         sums['Category'] = sums['Category'].str.replace('sim_', '').str.capitalize()
         
-        fig_pie = px.pie(sums, values='kWh', names='Category', title="Energy Mix", hole=0.4)
-        fig_pie.update_layout(height=300, margin=dict(l=0, r=0, t=30, b=0))
+        fig_pie = px.pie(sums, values='kWh', names='Category', title="Energy Breakdown Estimate", hole=0.4)
+        fig_pie.update_layout(height=350, margin=dict(l=0, r=0, t=30, b=0))
         st.plotly_chart(fig_pie, use_container_width=True)
         
     with col_right:
@@ -231,20 +239,11 @@ def show_dashboard(df_consumo, df_clima):
         df_sim['color'] = np.where(df_sim['diff'] > 0, '#ef5350', '#42a5f5')
         fig_res = go.Figure()
         fig_res.add_trace(go.Bar(x=df_sim['hora'], y=df_sim['diff'], marker_color=df_sim['color']))
-        fig_res.update_layout(title="Deviation (Sim - Real)", height=300, margin=dict(l=0, r=0, t=30, b=0), yaxis_title="kW Error")
+        fig_res.update_layout(title="Error Analysis (Real - Sim)", height=350, margin=dict(l=0, r=0, t=30, b=0), yaxis_title="kW Difference")
         st.plotly_chart(fig_res, use_container_width=True)
 
     # ROW 3: COMPACT DATA TOGGLE
-    with st.expander("Show Raw Data Table"):
+    with st.expander("📂 Show Raw Simulation Data"):
         st.dataframe(df_sim.round(1), use_container_width=True)
-
-# --- EXECUTION ---
-if __name__ == "__main__":
-    # Dummy Data Generator
-    dates = pd.date_range(start='2024-01-01', periods=24, freq='H')
-    df_con = pd.DataFrame({'fecha': dates, 'consumo_kwh': [
-        20,20,20,20,20,25,40,60,80,90,95,90,80,70,60,70,80,60,40,30,25,20,20,20
-    ]})
-    df_cli = pd.DataFrame({'fecha': dates, 'temperatura_c': np.linspace(15, 25, 24)})
-    
-    show_dashboard(df_con, df_cli)
+        csv = df_sim.to_csv(index=False).encode('utf-8')
+        st.download_button("Download CSV", csv, "sim_model.csv", "text/csv")
