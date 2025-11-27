@@ -132,8 +132,8 @@ def show_nilm_page(df_consumo, df_clima):
             l_sec = st.slider("Security %", 0.0, 0.5, 0.1)
             c3, c4 = st.columns(2)
             l_s, l_e = c3.slider("Light Time", 0, 24, (7, 21))
-            l_ru = c4.number_input("L-Ramp Up", 0.0, 2.0, 0.5)
-            l_rd = c4.number_input("L-Ramp Down", 0.0, 2.0, 0.5)
+            l_ru = c4.number_input("L-Ramp Up", 0.0, 5.0, 0.5)
+            l_rd = c4.number_input("L-Ramp Down", 0.0, 5.0, 0.5)
 
         # D. THERMAL
         with st.expander("3. HVAC Thermal", expanded=False):
