@@ -4,7 +4,88 @@ import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
 
-# ... (Keep your existing Logic Engine functions: generate_load_curve and run_simulation) ...
+# ==========================================
+# 1. LOGIC ENGINE (Flexible Ramps for ALL)
+# ==========================================
+def generate_load_curve(hours, start, end, max_kw, ramp_up, ramp_down, dips=None):
+    """
+    Universal function to generate a load curve with:
+    - Ramps (Up/Down)
+    - Schedule (Start/End)
+    - Dips (Lunch/Breaks)
+    """
+    if dips is None: dips = []
+    curve = np.zeros(len(hours))
+    
+    for i, h in enumerate(hours):
+        val = 0.0
+        
+        # 1. Active Window
+        if start <= h < end:
+            val = 1.0
+            
+            # 2. Ramp Up
+            if h < (start + ramp_up):
+                if ramp_up > 0: val = (h - start) / ramp_up
+            
+            # 3. Ramp Down
+            if h >= (end - ramp_down):
+                if ramp_down > 0: val = (end - h) / ramp_down
+            
+            # 4. Dips
+            for dip in dips:
+                if int(h) == int(dip['hour']):
+                    val *= dip['factor']
+                    
+        curve[i] = np.clip(val, 0.0, 1.0) * max_kw
+        
+    return curve
+
+def run_simulation(df_avg, config):
+    df = df_avg.copy()
+    hours = df['hora'].values
+    
+    # 1. BASE
+    df['sim_base'] = np.full(len(hours), config['base_kw'])
+    
+    # 2. VENTILATION (Now with Ramps)
+    df['sim_vent'] = generate_load_curve(hours, config['vent_s'], config['vent_e'], config['vent_kw'], config['vent_ru'], config['vent_rd'])
+
+    # 3. LIGHTING (Now with Ramps)
+    light_curve = generate_load_curve(hours, config['light_s'], config['light_e'], config['light_kw'], config['light_ru'], config['light_rd'])
+    # Apply usage factor
+    df['sim_light'] = light_curve * config['light_fac']
+    # Security Light
+    is_off = (df['sim_light'] < (config['light_kw'] * 0.1))
+    df.loc[is_off, 'sim_light'] = config['light_kw'] * config['light_sec']
+
+    # 4. THERMAL (HVAC)
+    if config['hvac_mode'] == "Constant":
+        df['sim_therm'] = generate_load_curve(hours, config['therm_s'], config['therm_e'], config['therm_kw'], 1, 1)
+    else:
+        # Weather Logic
+        delta = (np.maximum(0, df['temperatura_c'] - config['set_c']) + 
+                 np.maximum(0, config['set_h'] - df['temperatura_c']))
+        raw = delta * config['therm_sens']
+        sched = generate_load_curve(hours, config['therm_s'], config['therm_e'], 1.0, 1, 1)
+        df['sim_therm'] = np.minimum(raw, config['therm_kw']) * sched
+
+    # 5. CUSTOM PROCESSES
+    total_custom = np.zeros(len(hours))
+    for p in config['processes']:
+        p_load = generate_load_curve(hours, p['s'], p['e'], p['kw'], p['ru'], p['rd'], p['dips'])
+        col_name = f"proc_{p['name']}"
+        df[col_name] = p_load
+        total_custom += p_load
+    df['sim_proc'] = total_custom
+
+    # TOTAL
+    df['sim_total'] = df['sim_base'] + df['sim_vent'] + df['sim_light'] + df['sim_therm'] + df['sim_proc']
+    
+    if 'consumo_kwh' in df.columns:
+        df['diff'] = df['sim_total'] - df['consumo_kwh']
+        
+    return df
 
 # ==========================================
 # 2. UI LAYOUT (UPDATED)
@@ -194,4 +275,3 @@ def show_nilm_page(df_consumo, df_clima):
         st.dataframe(df_sim.round(1), use_container_width=True)
         csv = df_sim.to_csv(index=False).encode('utf-8')
         st.download_button("Download CSV", csv, "sim_model.csv", "text/csv")
-        
