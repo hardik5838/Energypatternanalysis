@@ -194,5 +194,4 @@ def show_nilm_page(df_consumo, df_clima):
         st.dataframe(df_sim.round(1), use_container_width=True)
         csv = df_sim.to_csv(index=False).encode('utf-8')
         st.download_button("Download CSV", csv, "sim_model.csv", "text/csv")
-
-
+        
