@@ -112,7 +112,7 @@ with st.sidebar:
         # Carga desde GitHub
         base_url = "https://raw.githubusercontent.com/hardik5838/EnergyPatternAnalysis/main/data/"
         file_energy = "251003 ASEPEYO - Curva de consumo ES0031405968956002BN.xlsx - Lecturas.csv"
-        file_weather = "POWER_Point_Hourly_20230401_20250831_041d38N_002d18E_LST.csv"
+        file_weather = "weather_Barcelona_2023.4-25.8.csv"
         
         st.info("Conectando con GitHub...")
         url_energy = base_url + quote(file_energy)
