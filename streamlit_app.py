@@ -12,15 +12,26 @@ st.set_page_config(page_title="Dashboard Energético Asepeyo", page_icon="⚡", 
 
 # --- Funciones de Carga de Datos ---
 
+## app.py (fragmento corregido)
+
 @st.cache_data
-def load_asepeyo_energy_data(file_path):
-    """Carga y procesa el archivo de consumo energético local o remoto."""
+def load_asepeyo_energy_data(file_input):
+    """Carga y procesa el archivo de consumo energético local, remoto o subido."""
     try:
-        if file_path.startswith('http'):
-            df = pd.read_csv(file_path, sep=',', decimal='.', skipinitialspace=True)
+        # VERIFICACIÓN DE TIPO:
+        # Si es string (URL o ruta local)
+        if isinstance(file_input, str):
+            if file_input.startswith('http'):
+                df = pd.read_csv(file_input, sep=',', decimal='.', skipinitialspace=True)
+            else:
+                df = pd.read_csv(file_input, sep=',', decimal='.')
+        # Si es un objeto (Archivo subido por Streamlit)
         else:
-            df = pd.read_csv(file_path, sep=',', decimal='.')
+            # Aseguramos leer desde el inicio del archivo
+            file_input.seek(0)
+            df = pd.read_csv(file_input, sep=',', decimal='.')
             
+        # --- Limpieza y Procesamiento (Igual que antes) ---
         df.rename(columns=lambda x: x.strip(), inplace=True)
         
         if 'Fecha' not in df.columns or 'Energía activa (kWh)' not in df.columns:
@@ -31,9 +42,11 @@ def load_asepeyo_energy_data(file_path):
         df['fecha'] = pd.to_datetime(df['fecha'], dayfirst=True, errors='coerce')
         df.dropna(subset=['fecha'], inplace=True)
         return df
+
     except Exception as e:
         st.error(f"Error al procesar el archivo de consumo: {e}")
         return pd.DataFrame()
+        
 
 @st.cache_data
 def load_nasa_weather_data(file_path):
