@@ -195,12 +195,29 @@ def show_nilm_page(df_consumo, df_clima):
                 procs.append({'name': f"P{i+1}", 'kw': pk, 's': ps, 'e': pe, 'ru': pr_u, 'rd': pr_d, 'dips': dips})
                 st.divider()
 
-    # --- CALCULATION ---
-    # We calculate the average based on the filtered data (minus excluded months)
-    df_avg = df_filtered.groupby(df_filtered['fecha'].dt.hour).agg({
-        'consumo_kwh': 'mean', 'temperatura_c': 'mean'
-    }).reset_index().rename(columns={'fecha': 'hora'})
 
+# --- CALCULATION (Hardened) ---
+    
+    # 1. Force Numeric Conversion to prevent TypeError in .agg()
+    for col in ['consumo_kwh', 'temperatura_c']:
+        if col in df_filtered.columns:
+            # errors='coerce' turns "missing" or "text" into NaN, preventing crashes
+            df_filtered[col] = pd.to_numeric(df_filtered[col], errors='coerce')
+    
+    # 2. Ensure fecha is datetime (requirement for .dt.hour)
+    df_filtered['fecha'] = pd.to_datetime(df_filtered['fecha'])
+
+    # 3. Aggregate safely
+    try:
+        df_avg = df_filtered.groupby(df_filtered['fecha'].dt.hour).agg({
+            'consumo_kwh': 'mean', 
+            'temperatura_c': 'mean'
+        }).reset_index().rename(columns={'fecha': 'hora'})
+    except Exception as e:
+        st.error(f"Aggregation Failed: {e}")
+        return
+
+    # 4. Proceed with configuration and simulation
     config = {
         'base_kw': base_kw,
         'vent_kw': vent_kw, 'vent_s': v_s, 'vent_e': v_e, 'vent_ru': v_ru, 'vent_rd': v_rd,
@@ -210,6 +227,8 @@ def show_nilm_page(df_consumo, df_clima):
     }
     
     df_sim = run_simulation(df_avg, config)
+    
+ 
 
     # ==========================================
     # 3. MAIN DASHBOARD AREA
