@@ -4,3 +4,4 @@ plotly
 statsmodels
 matplotlib
 requests
+scikit-learn
