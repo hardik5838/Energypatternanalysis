@@ -14,6 +14,7 @@ def generate_load_curve(hours, start, end, max_kw, ramp_up, ramp_down, dips=None
         val = 0.0
         if start <= h < end:
             val = 1.0
+            # Apply ramp up/down logic safely
             if h < (start + ramp_up) and ramp_up > 0: val = (h - start) / ramp_up
             if h >= (end - ramp_down) and ramp_down > 0: val = (end - h) / ramp_down
             for dip in dips:
@@ -25,35 +26,37 @@ def run_simulation(df_avg, config):
     df = df_avg.copy()
     hours = df['hora'].values
     
-    # Use .get() to prevent KeyErrors if keys are missing
+    # Use .get() to provide safety against KeyErrors
     df['sim_base'] = np.full(len(hours), config.get('base_kw', 0))
     
+    # Ventilation
     df['sim_vent'] = generate_load_curve(
-        hours, config.get('vent_s', 6), config.get('vent_e', 20), 
+        hours, config.get('vent_s', 0), config.get('vent_e', 24), 
         config.get('vent_kw', 0), config.get('vent_ru', 0.5), config.get('vent_rd', 0.5)
     )
     
-    # Fix for the Light KeyError
+    # Lighting - FIXED: explicitly providing ramp up (ru) and ramp down (rd)
     df['sim_light'] = generate_load_curve(
-        hours, config.get('light_s', 7), config.get('light_e', 21), 
-        config.get('light_kw', 0), config.get('light_ru', 0.5), config.get('light_rd', 0.5)
+        hours, config.get('light_s', 0), config.get('light_e', 24), 
+        config.get('light_kw', 0), 
+        config.get('light_ru', 0.5), # Default 0.5 if missing
+        config.get('light_rd', 0.5)  # Default 0.5 if missing
     ) * config.get('light_fac', 1.0)
     
-    # Handle Night/Security Lighting
+    # Minimum night lighting
     is_off = (df['sim_light'] < (config.get('light_kw', 0) * 0.1))
     df.loc[is_off, 'sim_light'] = config.get('light_kw', 0) * config.get('light_sec', 0.1)
 
-    # HVAC Logic
+    # HVAC
     if config.get('hvac_mode') == "Constant":
-        df['sim_therm'] = generate_load_curve(hours, config.get('therm_s', 8), config.get('therm_e', 19), config.get('therm_kw', 0), 1, 1)
+        df['sim_therm'] = generate_load_curve(hours, config.get('therm_s', 0), config.get('therm_e', 24), config.get('therm_kw', 0), 1, 1)
     else:
         delta = (np.maximum(0, df['temperatura_c'] - config.get('set_c', 24)) + 
                  np.maximum(0, config.get('set_h', 20) - df['temperatura_c']))
         raw = delta * config.get('therm_sens', 5.0)
-        sched = generate_load_curve(hours, config.get('therm_s', 8), config.get('therm_e', 19), 1.0, 1, 1)
+        sched = generate_load_curve(hours, config.get('therm_s', 0), config.get('therm_e', 24), 1.0, 1, 1)
         df['sim_therm'] = np.minimum(raw, config.get('therm_kw', 0)) * sched
 
-    # Calculate Totals
     df['sim_total'] = df['sim_base'] + df['sim_vent'] + df['sim_light'] + df['sim_therm']
     
     if 'consumo_kwh' in df.columns:
@@ -68,7 +71,7 @@ def run_simulation(df_avg, config):
 def show_nilm_page(df_consumo, df_clima):
     st.title("⚡ Energy Pattern Digital Twin")
 
-    # Column Normalization
+    # Column Normalization to lowercase to match logic
     df_consumo = df_consumo.copy()
     df_consumo.columns = df_consumo.columns.str.strip().str.lower()
     
@@ -80,7 +83,6 @@ def show_nilm_page(df_consumo, df_clima):
         df_merged = df_consumo.copy()
         df_merged['temperatura_c'] = 22.0
 
-    # --- SIDEBAR ---
     with st.sidebar:
         st.header("🎛️ Fitting Controls")
         day_type = st.radio("Profile Type", ["Laborable", "Fin de Semana"], horizontal=True)
@@ -108,12 +110,12 @@ def show_nilm_page(df_consumo, df_clima):
                 sc = st.number_input("Cool Set", 18, 30, 24)
                 sh = st.number_input("Heat Set", 15, 25, 20)
 
-    # --- AGGREGATION ---
+    # Aggregation
     df_avg = df_filtered.groupby(df_filtered['fecha'].dt.hour).agg({
         'consumo_kwh': 'mean', 'temperatura_c': 'mean'
     }).reset_index().rename(columns={'fecha': 'hora'})
 
-    # Full Configuration Dictionary
+    # Building the config - ENSURING ALL KEYS ARE PRESENT
     config = {
         'base_kw': base_kw, 
         'vent_kw': vent_kw, 'vent_s': v_s, 'vent_e': v_e, 'vent_ru': 0.5, 'vent_rd': 0.5,
@@ -124,13 +126,13 @@ def show_nilm_page(df_consumo, df_clima):
     
     df_sim = run_simulation(df_avg, config)
 
-    # --- 6 CHARTS SECTION ---
-    st.subheader(f"📊 Model Visualization: {day_type}")
+    # --- THE 6 CHARTS ---
+    st.subheader(f"📊 Visualization Dashboard: {day_type}")
     
     c1, c2 = st.columns(2)
     
     with c1:
-        # Chart 1: Stacked Load
+        # Chart 1: Distribution
         fig1 = go.Figure()
         layers = [('sim_base', 'Base', '#bdc3c7'), ('sim_vent', 'Vent.', '#3498db'), 
                   ('sim_therm', 'HVAC', '#e74c3c'), ('sim_light', 'Light', '#f1c40f')]
@@ -139,33 +141,32 @@ def show_nilm_page(df_consumo, df_clima):
         fig1.add_trace(go.Scatter(x=df_sim['hora'], y=df_sim['consumo_kwh'], name='REAL', line=dict(color='black', width=3)))
         st.plotly_chart(fig1, use_container_width=True)
 
-        # Chart 2: Consumption Mix
+        # Chart 2: Mix
         mix = df_sim[['sim_base', 'sim_vent', 'sim_therm', 'sim_light']].sum()
-        st.plotly_chart(px.pie(values=mix.values, names=mix.index, title="Load Mix Share"), use_container_width=True)
+        st.plotly_chart(px.pie(values=mix.values, names=mix.index, title="Load Mix Split"), use_container_width=True)
 
         # Chart 3: Correlation
-        st.plotly_chart(px.scatter(df_sim, x='consumo_kwh', y='sim_total', trendline="ols", title="Fit Quality Correlation"), use_container_width=True)
+        st.plotly_chart(px.scatter(df_sim, x='consumo_kwh', y='sim_total', trendline="ols", title="Real vs Simulated Correlation"), use_container_width=True)
 
     with c2:
-        # Chart 4: Hourly Error Bar
-        st.plotly_chart(px.bar(df_sim, x='hora', y='error_kw', title="Hourly Error (kW)", color='error_kw', color_continuous_scale='RdBu_r'), use_container_width=True)
+        # Chart 4: Hourly Error
+        st.plotly_chart(px.bar(df_sim, x='hora', y='error_kw', title="Hourly Fitting Error (kW)", color='error_kw', color_continuous_scale='RdBu_r'), use_container_width=True)
 
-        # Chart 5: Error Heatmap
-        st.write("**Error Percentage Heatmap**")
-        fig5 = px.imshow(df_sim['error_pct'].values.reshape(1, -1), color_continuous_scale='Plasma')
+        # Chart 5: Cumulative
+        fig5 = go.Figure()
+        fig5.add_trace(go.Scatter(x=df_sim['hora'], y=df_sim['consumo_kwh'].cumsum(), name="Real Acc.", fill='tozeroy'))
+        fig5.add_trace(go.Scatter(x=df_sim['hora'], y=df_sim['sim_total'].cumsum(), name="Sim Acc."))
         st.plotly_chart(fig5, use_container_width=True)
 
-        # Chart 6: Cumulative
-        fig6 = go.Figure()
-        fig6.add_trace(go.Scatter(x=df_sim['hora'], y=df_sim['consumo_kwh'].cumsum(), name="Real Cumulative", fill='tozeroy'))
-        fig6.add_trace(go.Scatter(x=df_sim['hora'], y=df_sim['sim_total'].cumsum(), name="Sim Cumulative"))
-        fig6.update_layout(title="Energy Accumulation (kWh)")
+        # Chart 6: Error Map
+        st.write("**Error Percentage per Hour**")
+        fig6 = px.imshow(df_sim['error_pct'].values.reshape(1, -1), color_continuous_scale='Plasma', aspect="auto")
         st.plotly_chart(fig6, use_container_width=True)
 
-    # --- FULL EXPORTABLE TABLE ---
+    # --- TABLE & EXPORT ---
     st.divider()
-    st.subheader("📋 Consumption Distribution Data")
-    st.dataframe(df_sim, use_container_width=True)
+    st.subheader("📋 Exportable Distribution Table")
+    st.dataframe(df_sim.style.format(precision=2), use_container_width=True)
     
     csv = df_sim.to_csv(index=False).encode('utf-8')
-    st.download_button("Download CSV Export", data=csv, file_name="load_distribution.csv", mime='text/csv')
+    st.download_button("Download CSV Data", data=csv, file_name=f"nilm_analysis_{day_type}.csv", mime='text/csv')
