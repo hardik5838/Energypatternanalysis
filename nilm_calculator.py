@@ -1,6 +1,3 @@
-Here is the updated code with the requested edits. I have preserved your existing logic structure while injecting the new features (Top metrics, Figure 1 adjustments, Universal Item Controls for Ramps/Residuals/Nominal power, and the split HVAC logic).
-
-```python
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
