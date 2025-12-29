@@ -99,10 +99,10 @@ def show_nilm_page(df_consumo, df_clima):
         st.error("No Data provided to calculator"); return
     
     try:
-        df_merged = pd.merge(df_consumo, df_clima, on='fecha', how='inner')
-        df_merged['fecha'] = pd.to_datetime(df_merged['fecha'])
+        df_merged = pd.merge(df_consumo, df_clima, on='Fecha', how='inner')
+        df_merged['Fecha'] = pd.to_datetime(df_merged['Fecha'])
     except KeyError:
-        st.error("Error: Input data must have a 'fecha' column.")
+        st.error("Error: Input data must have a 'Fecha' column.")
         return
 
     # --- SIDEBAR CONTROLS ---
@@ -110,7 +110,7 @@ def show_nilm_page(df_consumo, df_clima):
         st.header("🎛️ Control Panel")
         
         st.markdown("### 🗓️ Data Cleaning")
-        available_months = df_merged['fecha'].dt.month_name().unique()
+        available_months = df_merged['Fecha'].dt.month_name().unique()
         months_to_remove = st.multiselect(
             "Exclude Months (Anomalies)", 
             options=available_months,
@@ -118,7 +118,7 @@ def show_nilm_page(df_consumo, df_clima):
         )
         
         if months_to_remove:
-            mask_month = ~df_merged['fecha'].dt.month_name().isin(months_to_remove)
+            mask_month = ~df_merged['Fecha'].dt.month_name().isin(months_to_remove)
             df_merged = df_merged[mask_month]
 
         st.divider()
@@ -126,7 +126,7 @@ def show_nilm_page(df_consumo, df_clima):
         day_type = st.radio("Profile Type", ["Weekday", "Weekend"], horizontal=True)
         is_weekday = (day_type == "Weekday")
         
-        mask_day = df_merged['fecha'].dt.dayofweek < 5 if is_weekday else df_merged['fecha'].dt.dayofweek >= 5
+        mask_day = df_merged['Fecha'].dt.dayofweek < 5 if is_weekday else df_merged['Fecha'].dt.dayofweek >= 5
         # Create a deep copy to safely modify types
         df_filtered = df_merged[mask_day].copy()
         
@@ -193,13 +193,13 @@ def show_nilm_page(df_consumo, df_clima):
     # 3. Aggregate safely by hour
     try:
         # Group and calculate mean
-        df_avg = df_filtered.groupby(df_filtered['fecha'].dt.hour).agg({
+        df_avg = df_filtered.groupby(df_filtered['Fecha'].dt.hour).agg({
             'consumo_kwh': 'mean', 
             'temperatura_c': 'mean'
         }).reset_index()
         
-        # Rename 'fecha' (which is now the hour index) to 'hora'
-        df_avg = df_avg.rename(columns={'fecha': 'hora'})
+        # Rename 'Fecha' (which is now the hour index) to 'hora'
+        df_avg = df_avg.rename(columns={'Fecha': 'hora'})
         
     except Exception as e:
         st.error(f"Data Aggregation Failed: {e}")
