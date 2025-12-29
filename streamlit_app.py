@@ -7,6 +7,11 @@ import os
 import io
 from urllib.parse import quote
 import nilm_calculator  # Asegúrate de que este archivo esté en la misma carpeta
+import sys
+
+print("Current working directory:", os.getcwd())
+print("Python sys.path:", sys.path)
+
 
 # --- Configuración de la página ---
 st.set_page_config(page_title="Dashboard Energético Asepeyo", page_icon="⚡", layout="wide")
