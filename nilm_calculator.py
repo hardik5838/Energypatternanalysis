@@ -1,9 +1,13 @@
+Here is the updated code with the requested edits. I have preserved your existing logic structure while injecting the new features (Top metrics, Figure 1 adjustments, Universal Item Controls for Ramps/Residuals/Nominal power, and the split HVAC logic).
+
+```python
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
 import datetime
+from sklearn.metrics import mean_squared_error
 
 # Configuration for Page Layout
 st.set_page_config(page_title="NILM Digital Twin", layout="wide")
@@ -12,63 +16,69 @@ st.set_page_config(page_title="NILM Digital Twin", layout="wide")
 # 1. LOGIC ENGINE
 # ==========================================
 
-def generate_load_curve(hours, start, end, max_kw, ramp_up, ramp_down, dips=None):
+def generate_load_curve(hours, start, end, max_kw, ramp_up, ramp_down, nominal_pct=1.0, residual_pct=0.0, dips=None):
     """
-    Generates a load curve with ramps and specific hourly dips.
+    Generates a load curve with ramps, hourly dips, nominal scaling, and residual consumption.
     """
     if dips is None: dips = []
     
     curve = np.zeros(len(hours))
     
     for i, h in enumerate(hours):
-        val = 0.0
+        activity_val = 0.0
         # Basic Window
         if start <= h < end:
-            val = 1.0
+            activity_val = 1.0
             
             # Ramp Up
             if ramp_up > 0 and h < (start + ramp_up):
-                val = (h - start) / ramp_up
+                activity_val = (h - start) / ramp_up
             
             # Ramp Down
             if ramp_down > 0 and h >= (end - ramp_down):
-                val = (end - h) / ramp_down
+                activity_val = (end - h) / ramp_down
             
-            # Apply Dips (Percentage Drop)
-            # dip['hour'] is the hour index, dip['percent'] is how much to drop (e.g. 0.3 for 30% drop)
+            # Apply Dips (Percentage Drop relative to current activity)
             for dip in dips:
                 if int(h) == int(dip['hour']):
-                    # If dip is 40%, we multiply by 0.6
                     factor = 1.0 - (dip['percent'] / 100.0)
-                    val *= factor
-                    
-        curve[i] = np.clip(val, 0.0, 1.0) * max_kw
+                    activity_val *= factor
+        
+        # Clip activity between 0 and 1
+        activity_val = np.clip(activity_val, 0.0, 1.0)
+        
+        # Apply Scaling: 
+        # Low state = residual_pct
+        # High state = nominal_pct
+        # Value = Low + Activity * (High - Low)
+        val = residual_pct + activity_val * (nominal_pct - residual_pct)
+        
+        curve[i] = val * max_kw
         
     return curve
 
 def get_tariff_periods(is_weekend):
     """
-    Returns list of tuples (start, end, color, name) based on user definition.
-    Cheap: 0-8 (Weekends all day)
-    Medium: 8-9, 14-18, 22-24
-    Expensive: 9-14, 18-22
+    Returns list of tuples (start, end, color, name).
+    Colors made less saturated (approx 20% opacity).
+    Removed text labels to reduce clutter.
     """
-    # Colors with transparency
-    c_cheap = "rgba(46, 204, 113, 0.2)"   # Green
-    c_med = "rgba(241, 196, 15, 0.2)"     # Yellow
-    c_exp = "rgba(231, 76, 60, 0.2)"      # Red
+    # Colors with reduced saturation (20% opacity approx)
+    c_cheap = "rgba(46, 204, 113, 0.15)"   # Faint Green
+    c_med = "rgba(241, 196, 15, 0.15)"     # Faint Yellow
+    c_exp = "rgba(231, 76, 60, 0.15)"      # Faint Red
 
     if is_weekend:
-        return [(0, 24, c_cheap, "Cheap")]
+        return [(0, 24, c_cheap, "")] # Name removed
     
     # Workday Schedule
     periods = [
-        (0, 8, c_cheap, "Cheap"),
-        (8, 9, c_med, "Medium"),
-        (9, 14, c_exp, "Expensive"),
-        (14, 18, c_med, "Medium"),
-        (18, 22, c_exp, "Expensive"),
-        (22, 24, c_med, "Medium")
+        (0, 8, c_cheap, ""),
+        (8, 9, c_med, ""),
+        (9, 14, c_exp, ""),
+        (14, 18, c_med, ""),
+        (18, 22, c_exp, ""),
+        (22, 24, c_med, "")
     ]
     return periods
 
@@ -77,39 +87,64 @@ def run_simulation(df_avg, config):
     hours = df['hora'].values
     
     # 1. Base Loads
-    df['sim_base'] = np.full(len(hours), config.get('base_kw', 0))
+    # Note: Base load usually implies constant, but if user added ramps/residual to base in UI, we use generator
+    df['sim_base'] = generate_load_curve(
+        hours, 0, 24, config['base_kw'], 
+        config.get('base_ru', 0), config.get('base_rd', 0),
+        config.get('base_nom', 1.0), config.get('base_res', 1.0) # Base usually constant, but flexible
+    )
     
     # 2. Ventilation
     df['sim_vent'] = generate_load_curve(
         hours, config['vent_s'], config['vent_e'], 
-        config['vent_kw'], config.get('vent_ru', 0.5), config.get('vent_rd', 0.5)
+        config['vent_kw'], config.get('vent_ru', 0.5), config.get('vent_rd', 0.5),
+        config.get('vent_nom', 1.0), config.get('vent_res', 0.0)
     )
     
-    # 3. Lighting (with smart night logic)
-    raw_light = generate_load_curve(
+    # 3. Lighting
+    df['sim_light'] = generate_load_curve(
         hours, config['light_s'], config['light_e'], 
-        config['light_kw'], config.get('light_ru', 0.5), config.get('light_rd', 0.5)
-    ) * config.get('light_fac', 1.0)
-    
-    # Minimum night lighting logic
-    min_light = config['light_kw'] * config.get('light_sec', 0.1)
-    df['sim_light'] = np.maximum(raw_light, min_light)
+        config['light_kw'], config.get('light_ru', 0.5), config.get('light_rd', 0.5),
+        config.get('light_nom', 1.0), config.get('light_res', 0.0)
+    )
 
-    # 4. HVAC
-    if config.get('hvac_mode') == "Constant":
-        df['sim_therm'] = generate_load_curve(hours, config['therm_s'], config['therm_e'], config['therm_kw'], 1, 1)
-    else:
-        # Simple Degree-Day Logic
-        delta = (np.maximum(0, df['temperatura_c'] - config.get('set_c', 24)) + 
-                 np.maximum(0, config.get('set_h', 20) - df['temperatura_c']))
-        raw = delta * config.get('therm_sens', 5.0)
-        sched = generate_load_curve(hours, config['therm_s'], config['therm_e'], 1.0, 1, 1)
-        df['sim_therm'] = np.minimum(raw, config['therm_kw']) * sched
+    # 4. HVAC (Split System)
+    # HVAC 1.1: Ventilation/Climatization (Outdoor ref, COP, Peak)
+    # Logic: Uses outdoor temp distance from comfortable base (e.g. 20C) scaled by COP
+    delta_T_out = np.abs(df['temperatura_c'] - 20.0) 
+    # Efficiency factor: Higher COP = Less power used. 
+    # We model load as: (DeltaT * Peak_Capacity / COP) normalized.
+    # To prevent division by zero or infinite scaling, we simplify:
+    # Load ~ (DeltaT / 20) * (Peak / COP) * 2 (Scaling factor)
+    hvac_1_raw = (delta_T_out / 20.0) * (config['hvac1_kw'] / max(0.5, config['hvac1_cop'])) * 5.0
+    hvac_1_curve = np.clip(hvac_1_raw, 0, config['hvac1_kw'])
+    # Apply schedule/nominal/residual to the HVAC availability, then multiply by demand
+    hvac_avail = generate_load_curve(hours, config['hvac_s'], config['hvac_e'], 1.0, 
+                                     config['hvac_ru'], config['hvac_rd'], 
+                                     config['hvac1_nom'], config['hvac1_res'])
+    df['sim_hvac_1'] = hvac_1_curve * hvac_avail
+
+    # HVAC 1.2: Overall Building Efficiency (Indoor Setpoint ref, Envelope Efficiency)
+    # Logic: Energy needed to maintain Indoor Setpoint against Outdoor Temp, reduced by Envelope Efficiency.
+    # Delta = Abs(Outdoor - Indoor_Setpoint)
+    # Load = Delta * (1 - Efficiency) * Scaling
+    delta_T_in = np.abs(df['temperatura_c'] - config['hvac2_setpoint'])
+    envelope_factor = (1.0 - (config['hvac2_eff'] / 100.0)) # 100% eff = 0 load
+    hvac_2_raw = delta_T_in * envelope_factor * 2.0 # Scaling constant
+    # Apply same availability schedule
+    hvac_2_curve = np.clip(hvac_2_raw, 0, config['hvac_kw_total']) # Cap at total generic capacity logic
+    # Reuse schedule from HVAC main settings for timing
+    df['sim_hvac_2'] = hvac_2_curve * hvac_avail
+
+    # Combine HVAC for plotting
+    df['sim_therm'] = df['sim_hvac_1'] + df['sim_hvac_2']
 
     # 5. Occupancy
     df['sim_occ'] = generate_load_curve(
         hours, config['occ_s'], config['occ_e'], config['occ_kw'],
-        config.get('occ_ru', 1), config.get('occ_rd', 1), config.get('occ_dips', [])
+        config.get('occ_ru', 1), config.get('occ_rd', 1),
+        config.get('occ_nom', 1.0), config.get('occ_res', 0.0),
+        config.get('occ_dips', [])
     )
 
     # 6. Variable Processes (1, 2, 3)
@@ -118,7 +153,9 @@ def run_simulation(df_avg, config):
         if config.get(f'{p_key}_enabled', False):
             df[f'sim_{p_key}'] = generate_load_curve(
                 hours, config[f'{p_key}_s'], config[f'{p_key}_e'], config[f'{p_key}_kw'],
-                config[f'{p_key}_ru'], config[f'{p_key}_rd'], config.get(f'{p_key}_dips', [])
+                config[f'{p_key}_ru'], config[f'{p_key}_rd'],
+                config.get(f'{p_key}_nom', 1.0), config.get(f'{p_key}_res', 0.0),
+                config.get(f'{p_key}_dips', [])
             )
         else:
             df[f'sim_{p_key}'] = 0.0
@@ -138,14 +175,40 @@ def run_simulation(df_avg, config):
 def render_dips_ui(key_prefix, max_dips=4):
     """Helper to render dynamic dips input in sidebar"""
     dips = []
-    with st.expander(f"📉 Dips Configuration ({key_prefix})"):
-        num_dips = st.number_input(f"Count ({key_prefix})", 0, max_dips, 0, key=f"n_dips_{key_prefix}")
+    with st.expander(f"📉 Dips Configuration"):
+        num_dips = st.number_input(f"Count", 0, max_dips, 0, key=f"n_dips_{key_prefix}")
         for i in range(num_dips):
             c1, c2 = st.columns(2)
             h = c1.number_input(f"Hour", 0, 23, 13, key=f"h_{key_prefix}_{i}")
             p = c2.number_input(f"Drop %", 0, 100, 50, key=f"p_{key_prefix}_{i}")
             dips.append({'hour': h, 'percent': p})
     return dips
+
+def render_standard_controls(prefix, label, default_kw, default_sched):
+    """
+    Renders standard controls for ALL items:
+    - Schedule (Start/End)
+    - Peak Power (kW)
+    - Ramp Up / Ramp Down
+    - Nominal Power Slider
+    - Residual Consumption (Checkbox + %)
+    """
+    st.subheader(f"{label} Settings")
+    kw = st.number_input(f"{label} Max [kW]", 0.0, 10000.0, float(default_kw), key=f"{prefix}_kw")
+    s, e = st.slider(f"{label} Schedule", 0, 24, default_sched, key=f"{prefix}_sched")
+    
+    c1, c2 = st.columns(2)
+    ru = c1.number_input(f"Ramp Up (h)", 0.0, 10.0, 0.5, key=f"{prefix}_ru")
+    rd = c2.number_input(f"Ramp Down (h)", 0.0, 10.0, 0.5, key=f"{prefix}_rd")
+    
+    nom = st.slider(f"{label} Nominal Power %", 0, 100, 100, key=f"{prefix}_nom") / 100.0
+    
+    res_on = st.checkbox(f"Residual Consumption?", key=f"{prefix}_res_on")
+    res_val = 0.0
+    if res_on:
+        res_val = st.number_input(f"Residual % of Max", 0.0, 100.0, 5.0, key=f"{prefix}_res_val") / 100.0
+        
+    return kw, s, e, ru, rd, nom, res_val
 
 # ==========================================
 # 3. MAIN UI
@@ -177,29 +240,45 @@ def show_nilm_page(df_consumo, df_clima):
         st.divider()
         st.header("2. Infrastructure")
         
-        # Base & Vent
-        base_kw = st.number_input("Base Load [kW]", 0.0, 5000.0, 20.0)
-        vent_kw = st.number_input("Ventilation [kW]", 0.0, 5000.0, 30.0)
-        v_s, v_e = st.slider("Vent. Schedule", 0, 24, (6, 20))
+        # Base Load (Treated as an item now)
+        b_kw, b_s, b_e, b_ru, b_rd, b_nom, b_res = render_standard_controls("base", "Base Load", 20.0, (0, 24))
 
+        st.divider()
+        # Ventilation
+        v_kw, v_s, v_e, v_ru, v_rd, v_nom, v_res = render_standard_controls("vent", "Ventilation", 30.0, (6, 20))
+
+        st.divider()
         # Lighting
-        st.subheader("Lighting")
-        light_kw = st.number_input("Light Max [kW]", 0.0, 5000.0, 15.0)
-        l_s, l_e = st.slider("Light Schedule", 0, 24, (7, 21))
+        l_kw, l_s, l_e, l_ru, l_rd, l_nom, l_res = render_standard_controls("light", "Lighting", 15.0, (7, 21))
         
-        # HVAC
-        st.subheader("HVAC")
-        therm_kw = st.number_input("HVAC Cap [kW]", 0.0, 10000.0, 40.0)
-        t_s, t_e = st.slider("HVAC Schedule", 0, 24, (8, 19))
-        mode = st.selectbox("HVAC Mode", ["Constant", "Weather Driven"])
+        st.divider()
+        # HVAC SPLIT
+        st.subheader("❄️ HVAC Configuration")
+        # Shared Schedule/Ramps for the HVAC system
+        h_s, h_e = st.slider("HVAC Operation Window", 0, 24, (8, 19))
+        c1, c2 = st.columns(2)
+        h_ru = c1.number_input("HVAC Ramp Up", 0.0, 5.0, 1.0)
+        h_rd = c2.number_input("HVAC Ramp Down", 0.0, 5.0, 1.0)
         
+        st.markdown("**HVAC 1.1: Vent/Climatization**")
+        h1_kw = st.number_input("HVAC 1.1 Peak [kW]", 0.0, 5000.0, 20.0)
+        h1_cop = st.slider("COP (Efficiency)", 1.0, 6.0, 3.0)
+        h1_nom = st.slider("HVAC 1.1 Nominal %", 0, 100, 100) / 100.0
+        
+        st.markdown("**HVAC 1.2: Building Envelope**")
+        # For simplicity, we assume HVAC 1.2 adds to the load up to a total capacity
+        h2_eff = st.slider("Envelope Efficiency %", 0, 100, 50, help="Higher means better insulation, less load")
+        h2_set = st.slider("Indoor Setpoint [°C]", 16, 30, 24)
+        
+        # Checkbox for residual HVAC
+        h_res_on = st.checkbox("HVAC Residual?", value=False)
+        h_res = (st.number_input("HVAC Residual %", 0.0, 100.0, 5.0) / 100.0) if h_res_on else 0.0
+
         st.divider()
         st.header("3. Variable Processes")
         
-        # Occupancy Curve
-        st.subheader("👥 Occupancy")
-        occ_kw = st.number_input("Occupancy Max [kW]", 0.0, 5000.0, 10.0)
-        occ_s, occ_e = st.slider("Occ. Schedule", 0, 24, (8, 18))
+        # Occupancy
+        o_kw, o_s, o_e, o_ru, o_rd, o_nom, o_res = render_standard_controls("occ", "Occupancy", 10.0, (8, 18))
         occ_dips = render_dips_ui("occ")
         
         # 3 Generic Variable Processes
@@ -209,13 +288,18 @@ def show_nilm_page(df_consumo, df_clima):
                 enabled = st.checkbox(f"Enable Process {i}", value=(i==1))
                 name = st.text_input(f"Name {i}", value=f"Process {i}")
                 color = st.color_picker(f"Color {i}", value="#9b59b6")
-                p_kw = st.number_input(f"Max kW {i}", 0.0, 5000.0, 50.0)
-                p_s, p_e = st.slider(f"Schedule {i}", 0, 24, (9, 17))
-                c1, c2 = st.columns(2)
-                ru = c1.number_input(f"Ramp Up (h) {i}", 0.0, 5.0, 1.0)
-                rd = c2.number_input(f"Ramp Down (h) {i}", 0.0, 5.0, 1.0)
                 
-                # Dips for this process
+                # Use standard control inputs inside the loop manually to capture values
+                p_kw = st.number_input(f"Max kW {i}", 0.0, 5000.0, 50.0, key=f"p_kw_{i}")
+                p_s, p_e = st.slider(f"Schedule {i}", 0, 24, (9, 17), key=f"p_sch_{i}")
+                c1, c2 = st.columns(2)
+                p_ru = c1.number_input(f"Ramp Up {i}", 0.0, 5.0, 1.0, key=f"p_ru_{i}")
+                p_rd = c2.number_input(f"Ramp Down {i}", 0.0, 5.0, 1.0, key=f"p_rd_{i}")
+                p_nom = st.slider(f"Nominal % {i}", 0, 100, 100, key=f"p_nom_{i}") / 100.0
+                
+                res_on_p = st.checkbox(f"Residual {i}?", key=f"p_res_on_{i}")
+                p_res = (st.number_input(f"Res % {i}", 0.0, 100.0, 5.0, key=f"p_res_{i}") / 100.0) if res_on_p else 0.0
+                
                 p_dips = render_dips_ui(f"proc_{i}")
                 
                 proc_configs.update({
@@ -224,7 +308,8 @@ def show_nilm_page(df_consumo, df_clima):
                     f'proc_{i}_color': color,
                     f'proc_{i}_kw': p_kw,
                     f'proc_{i}_s': p_s, f'proc_{i}_e': p_e,
-                    f'proc_{i}_ru': ru, f'proc_{i}_rd': rd,
+                    f'proc_{i}_ru': p_ru, f'proc_{i}_rd': p_rd,
+                    f'proc_{i}_nom': p_nom, f'proc_{i}_res': p_res,
                     f'proc_{i}_dips': p_dips
                 })
 
@@ -246,17 +331,36 @@ def show_nilm_page(df_consumo, df_clima):
 
     # 3. Build Config
     config = {
-        'base_kw': base_kw, 
-        'vent_kw': vent_kw, 'vent_s': v_s, 'vent_e': v_e,
-        'light_kw': light_kw, 'light_s': l_s, 'light_e': l_e,
-        'therm_kw': therm_kw, 'therm_s': t_s, 'therm_e': t_e, 'hvac_mode': mode,
-        'occ_kw': occ_kw, 'occ_s': occ_s, 'occ_e': occ_e, 'occ_dips': occ_dips,
-        'set_c': 24, 'set_h': 20, 'therm_sens': 5.0
+        'base_kw': b_kw, 'base_ru': b_ru, 'base_rd': b_rd, 'base_nom': b_nom, 'base_res': b_res,
+        'vent_kw': v_kw, 'vent_s': v_s, 'vent_e': v_e, 'vent_ru': v_ru, 'vent_rd': v_rd, 'vent_nom': v_nom, 'vent_res': v_res,
+        'light_kw': l_kw, 'light_s': l_s, 'light_e': l_e, 'light_ru': l_ru, 'light_rd': l_rd, 'light_nom': l_nom, 'light_res': l_res,
+        
+        # HVAC Split Configs
+        'hvac_s': h_s, 'hvac_e': h_e, 'hvac_ru': h_ru, 'hvac_rd': h_rd,
+        'hvac_kw_total': h1_kw + 50, # Arbitrary cap for calculation safety
+        'hvac1_kw': h1_kw, 'hvac1_cop': h1_cop, 'hvac1_nom': h1_nom, 'hvac1_res': h_res,
+        'hvac2_eff': h2_eff, 'hvac2_setpoint': h2_set,
+        
+        'occ_kw': o_kw, 'occ_s': o_s, 'occ_e': o_e, 'occ_ru': o_ru, 'occ_rd': o_rd, 'occ_nom': o_nom, 'occ_res': o_res, 'occ_dips': occ_dips,
     }
     config.update(proc_configs)
 
     # 4. Simulate
     df_sim = run_simulation(df_avg, config)
+
+    # --- TOP METRICS SECTION ---
+    st.markdown("### 📊 Key Performance Indicators")
+    total_real = df_sim['consumo_kwh'].sum()
+    total_sim = df_sim['sim_total'].sum()
+    
+    # Calculate RMSE
+    rmse = np.sqrt(mean_squared_error(df_sim['consumo_kwh'], df_sim['sim_total']))
+    
+    kpi1, kpi2, kpi3 = st.columns(3)
+    kpi1.metric("Total Real Consumption", f"{total_real:,.0f} kWh")
+    kpi2.metric("Total Simulated Consumption", f"{total_sim:,.0f} kWh", delta=f"{total_sim - total_real:,.0f} kWh")
+    kpi3.metric("Overall Error (RMSE)", f"{rmse:.2f}", delta_color="inverse")
+    st.divider()
 
     # --- DASHBOARD ---
     
@@ -265,14 +369,14 @@ def show_nilm_page(df_consumo, df_clima):
     
     fig1 = go.Figure()
     
-    # Add Tariff Backgrounds
+    # Add Tariff Backgrounds (Subtle, no labels)
     tariff_periods = get_tariff_periods(not is_weekday)
     for start, end, color, name in tariff_periods:
         fig1.add_vrect(
             x0=start, x1=end, 
             fillcolor=color, opacity=1, 
             layer="below", line_width=0,
-            annotation_text=name, annotation_position="top left"
+            # Removed annotation text as requested
         )
 
     # Add Stacked Simulation Layers
@@ -280,7 +384,7 @@ def show_nilm_page(df_consumo, df_clima):
         ('sim_base', 'Base Load', '#7f8c8d'),
         ('sim_vent', 'Ventilation', '#3498db'),
         ('sim_light', 'Lighting', '#f1c40f'),
-        ('sim_therm', 'HVAC', '#e74c3c'),
+        ('sim_therm', 'HVAC (Total)', '#e74c3c'),
         ('sim_occ', 'Occupancy', '#e67e22')
     ]
     
@@ -369,3 +473,5 @@ if __name__ == "__main__":
     df_clim = pd.DataFrame({'fecha': dates, 'temperatura_c': 15 + 10 * np.sin(np.linspace(0, 3.14 * 2 * 365, len(dates)))})
     
     show_nilm_page(df_cons, df_clim)
+
+```
