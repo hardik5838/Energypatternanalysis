@@ -473,5 +473,3 @@ if __name__ == "__main__":
     df_clim = pd.DataFrame({'fecha': dates, 'temperatura_c': 15 + 10 * np.sin(np.linspace(0, 3.14 * 2 * 365, len(dates)))})
     
     show_nilm_page(df_cons, df_clim)
-
-```
