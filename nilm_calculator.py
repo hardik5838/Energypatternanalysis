@@ -3,14 +3,10 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
-import datetime
 from sklearn.metrics import mean_squared_error
 
-# Configuration for Page Layout
-st.set_page_config(page_title="NILM Digital Twin", layout="wide")
-
 # ==========================================
-# 1. LOGIC ENGINE
+# 1. LOGIC ENGINE (Helper Functions)
 # ==========================================
 
 def generate_load_curve(hours, start, end, max_kw, ramp_up, ramp_down, nominal_pct=1.0, residual_pct=0.0, dips=None):
@@ -58,15 +54,13 @@ def get_tariff_periods(is_weekend):
     """
     Returns list of tuples (start, end, color, name).
     Colors made less saturated (approx 20% opacity).
-    Removed text labels to reduce clutter.
     """
-    # Colors with reduced saturation (20% opacity approx)
     c_cheap = "rgba(46, 204, 113, 0.15)"   # Faint Green
     c_med = "rgba(241, 196, 15, 0.15)"     # Faint Yellow
     c_exp = "rgba(231, 76, 60, 0.15)"      # Faint Red
 
     if is_weekend:
-        return [(0, 24, c_cheap, "")] # Name removed
+        return [(0, 24, c_cheap, "")] 
     
     # Workday Schedule
     periods = [
@@ -84,11 +78,10 @@ def run_simulation(df_avg, config):
     hours = df['hora'].values
     
     # 1. Base Loads
-    # Note: Base load usually implies constant, but if user added ramps/residual to base in UI, we use generator
     df['sim_base'] = generate_load_curve(
         hours, 0, 24, config['base_kw'], 
         config.get('base_ru', 0), config.get('base_rd', 0),
-        config.get('base_nom', 1.0), config.get('base_res', 1.0) # Base usually constant, but flexible
+        config.get('base_nom', 1.0), config.get('base_res', 1.0)
     )
     
     # 2. Ventilation
@@ -106,34 +99,21 @@ def run_simulation(df_avg, config):
     )
 
     # 4. HVAC (Split System)
-    # HVAC 1.1: Ventilation/Climatization (Outdoor ref, COP, Peak)
-    # Logic: Uses outdoor temp distance from comfortable base (e.g. 20C) scaled by COP
     delta_T_out = np.abs(df['temperatura_c'] - 20.0) 
-    # Efficiency factor: Higher COP = Less power used. 
-    # We model load as: (DeltaT * Peak_Capacity / COP) normalized.
-    # To prevent division by zero or infinite scaling, we simplify:
-    # Load ~ (DeltaT / 20) * (Peak / COP) * 2 (Scaling factor)
     hvac_1_raw = (delta_T_out / 20.0) * (config['hvac1_kw'] / max(0.5, config['hvac1_cop'])) * 5.0
     hvac_1_curve = np.clip(hvac_1_raw, 0, config['hvac1_kw'])
-    # Apply schedule/nominal/residual to the HVAC availability, then multiply by demand
+    
     hvac_avail = generate_load_curve(hours, config['hvac_s'], config['hvac_e'], 1.0, 
                                      config['hvac_ru'], config['hvac_rd'], 
                                      config['hvac1_nom'], config['hvac1_res'])
     df['sim_hvac_1'] = hvac_1_curve * hvac_avail
 
-    # HVAC 1.2: Overall Building Efficiency (Indoor Setpoint ref, Envelope Efficiency)
-    # Logic: Energy needed to maintain Indoor Setpoint against Outdoor Temp, reduced by Envelope Efficiency.
-    # Delta = Abs(Outdoor - Indoor_Setpoint)
-    # Load = Delta * (1 - Efficiency) * Scaling
     delta_T_in = np.abs(df['temperatura_c'] - config['hvac2_setpoint'])
-    envelope_factor = (1.0 - (config['hvac2_eff'] / 100.0)) # 100% eff = 0 load
-    hvac_2_raw = delta_T_in * envelope_factor * 2.0 # Scaling constant
-    # Apply same availability schedule
-    hvac_2_curve = np.clip(hvac_2_raw, 0, config['hvac_kw_total']) # Cap at total generic capacity logic
-    # Reuse schedule from HVAC main settings for timing
+    envelope_factor = (1.0 - (config['hvac2_eff'] / 100.0))
+    hvac_2_raw = delta_T_in * envelope_factor * 2.0 
+    hvac_2_curve = np.clip(hvac_2_raw, 0, config['hvac_kw_total'])
     df['sim_hvac_2'] = hvac_2_curve * hvac_avail
 
-    # Combine HVAC for plotting
     df['sim_therm'] = df['sim_hvac_1'] + df['sim_hvac_2']
 
     # 5. Occupancy
@@ -169,6 +149,7 @@ def run_simulation(df_avg, config):
 # ==========================================
 # 2. UI HELPERS
 # ==========================================
+
 def render_dips_ui(key_prefix, max_dips=4):
     """Helper to render dynamic dips input in sidebar"""
     dips = []
@@ -183,12 +164,7 @@ def render_dips_ui(key_prefix, max_dips=4):
 
 def render_standard_controls(prefix, label, default_kw, default_sched):
     """
-    Renders standard controls for ALL items:
-    - Schedule (Start/End)
-    - Peak Power (kW)
-    - Ramp Up / Ramp Down
-    - Nominal Power Slider
-    - Residual Consumption (Checkbox + %)
+    Renders standard controls for ALL items.
     """
     st.subheader(f"{label} Settings")
     kw = st.number_input(f"{label} Max [kW]", 0.0, 10000.0, float(default_kw), key=f"{prefix}_kw")
@@ -208,9 +184,14 @@ def render_standard_controls(prefix, label, default_kw, default_sched):
     return kw, s, e, ru, rd, nom, res_val
 
 # ==========================================
-# 3. MAIN UI
+# 3. MAIN FUNCTION (Callable)
 # ==========================================
+
 def show_nilm_page(df_consumo, df_clima):
+    """
+    Main function to render the NILM Digital Twin page.
+    Call this function from your main app.
+    """
     st.title("⚡ Advanced Energy Digital Twin")
     
     # --- DATA PREP ---
@@ -237,7 +218,7 @@ def show_nilm_page(df_consumo, df_clima):
         st.divider()
         st.header("2. Infrastructure")
         
-        # Base Load (Treated as an item now)
+        # Base Load
         b_kw, b_s, b_e, b_ru, b_rd, b_nom, b_res = render_standard_controls("base", "Base Load", 20.0, (0, 24))
 
         st.divider()
@@ -251,7 +232,6 @@ def show_nilm_page(df_consumo, df_clima):
         st.divider()
         # HVAC SPLIT
         st.subheader("❄️ HVAC Configuration")
-        # Shared Schedule/Ramps for the HVAC system
         h_s, h_e = st.slider("HVAC Operation Window", 0, 24, (8, 19))
         c1, c2 = st.columns(2)
         h_ru = c1.number_input("HVAC Ramp Up", 0.0, 5.0, 1.0)
@@ -263,11 +243,9 @@ def show_nilm_page(df_consumo, df_clima):
         h1_nom = st.slider("HVAC 1.1 Nominal %", 0, 100, 100) / 100.0
         
         st.markdown("**HVAC 1.2: Building Envelope**")
-        # For simplicity, we assume HVAC 1.2 adds to the load up to a total capacity
         h2_eff = st.slider("Envelope Efficiency %", 0, 100, 50, help="Higher means better insulation, less load")
         h2_set = st.slider("Indoor Setpoint [°C]", 16, 30, 24)
         
-        # Checkbox for residual HVAC
         h_res_on = st.checkbox("HVAC Residual?", value=False)
         h_res = (st.number_input("HVAC Residual %", 0.0, 100.0, 5.0) / 100.0) if h_res_on else 0.0
 
@@ -278,7 +256,7 @@ def show_nilm_page(df_consumo, df_clima):
         o_kw, o_s, o_e, o_ru, o_rd, o_nom, o_res = render_standard_controls("occ", "Occupancy", 10.0, (8, 18))
         occ_dips = render_dips_ui("occ")
         
-        # 3 Generic Variable Processes
+        # Generic Processes
         proc_configs = {}
         for i in range(1, 4):
             with st.expander(f"⚙️ Custom Process {i}"):
@@ -286,7 +264,6 @@ def show_nilm_page(df_consumo, df_clima):
                 name = st.text_input(f"Name {i}", value=f"Process {i}")
                 color = st.color_picker(f"Color {i}", value="#9b59b6")
                 
-                # Use standard control inputs inside the loop manually to capture values
                 p_kw = st.number_input(f"Max kW {i}", 0.0, 5000.0, 50.0, key=f"p_kw_{i}")
                 p_s, p_e = st.slider(f"Schedule {i}", 0, 24, (9, 17), key=f"p_sch_{i}")
                 c1, c2 = st.columns(2)
@@ -311,8 +288,6 @@ def show_nilm_page(df_consumo, df_clima):
                 })
 
     # --- PROCESSING ---
-    
-    # 1. Filter Data
     mask_month = df_merged['fecha'].dt.month.isin(selected_months)
     mask_day = df_merged['fecha'].dt.dayofweek < 5 if is_weekday else df_merged['fecha'].dt.dayofweek >= 5
     df_filtered = df_merged[mask_month & mask_day].copy()
@@ -321,20 +296,17 @@ def show_nilm_page(df_consumo, df_clima):
         st.warning("No data for selected filters.")
         return
 
-    # 2. Aggregate
     df_avg = df_filtered.groupby(df_filtered['fecha'].dt.hour).agg({
         'consumo_kwh': 'mean', 'temperatura_c': 'mean'
     }).reset_index().rename(columns={'fecha': 'hora'})
 
-    # 3. Build Config
     config = {
         'base_kw': b_kw, 'base_ru': b_ru, 'base_rd': b_rd, 'base_nom': b_nom, 'base_res': b_res,
         'vent_kw': v_kw, 'vent_s': v_s, 'vent_e': v_e, 'vent_ru': v_ru, 'vent_rd': v_rd, 'vent_nom': v_nom, 'vent_res': v_res,
         'light_kw': l_kw, 'light_s': l_s, 'light_e': l_e, 'light_ru': l_ru, 'light_rd': l_rd, 'light_nom': l_nom, 'light_res': l_res,
         
-        # HVAC Split Configs
         'hvac_s': h_s, 'hvac_e': h_e, 'hvac_ru': h_ru, 'hvac_rd': h_rd,
-        'hvac_kw_total': h1_kw + 50, # Arbitrary cap for calculation safety
+        'hvac_kw_total': h1_kw + 50,
         'hvac1_kw': h1_kw, 'hvac1_cop': h1_cop, 'hvac1_nom': h1_nom, 'hvac1_res': h_res,
         'hvac2_eff': h2_eff, 'hvac2_setpoint': h2_set,
         
@@ -342,15 +314,12 @@ def show_nilm_page(df_consumo, df_clima):
     }
     config.update(proc_configs)
 
-    # 4. Simulate
     df_sim = run_simulation(df_avg, config)
 
-    # --- TOP METRICS SECTION ---
+    # --- TOP METRICS ---
     st.markdown("### 📊 Key Performance Indicators")
     total_real = df_sim['consumo_kwh'].sum()
     total_sim = df_sim['sim_total'].sum()
-    
-    # Calculate RMSE
     rmse = np.sqrt(mean_squared_error(df_sim['consumo_kwh'], df_sim['sim_total']))
     
     kpi1, kpi2, kpi3 = st.columns(3)
@@ -359,24 +328,14 @@ def show_nilm_page(df_consumo, df_clima):
     kpi3.metric("Overall Error (RMSE)", f"{rmse:.2f}", delta_color="inverse")
     st.divider()
 
-    # --- DASHBOARD ---
-    
-    # Chart 1: Main Full Width
+    # --- PLOTS ---
     st.markdown("### 📈 Main Load Profile Analysis")
-    
     fig1 = go.Figure()
     
-    # Add Tariff Backgrounds (Subtle, no labels)
     tariff_periods = get_tariff_periods(not is_weekday)
     for start, end, color, name in tariff_periods:
-        fig1.add_vrect(
-            x0=start, x1=end, 
-            fillcolor=color, opacity=1, 
-            layer="below", line_width=0,
-            # Removed annotation text as requested
-        )
+        fig1.add_vrect(x0=start, x1=end, fillcolor=color, opacity=1, layer="below", line_width=0)
 
-    # Add Stacked Simulation Layers
     layers = [
         ('sim_base', 'Base Load', '#7f8c8d'),
         ('sim_vent', 'Ventilation', '#3498db'),
@@ -384,61 +343,32 @@ def show_nilm_page(df_consumo, df_clima):
         ('sim_therm', 'HVAC (Total)', '#e74c3c'),
         ('sim_occ', 'Occupancy', '#e67e22')
     ]
-    
-    # Add Custom Processes to layers
     for i in range(1, 4):
         if config[f'proc_{i}_enabled']:
             layers.append((f'sim_proc_{i}', config[f'proc_{i}_name'], config[f'proc_{i}_color']))
 
     for col, name, color in layers:
-        fig1.add_trace(go.Scatter(
-            x=df_sim['hora'], y=df_sim[col], 
-            stackgroup='one', name=name, 
-            mode='none', fillcolor=color
-        ))
+        fig1.add_trace(go.Scatter(x=df_sim['hora'], y=df_sim[col], stackgroup='one', name=name, mode='none', fillcolor=color))
 
-    # Real Consumption Line
-    fig1.add_trace(go.Scatter(
-        x=df_sim['hora'], y=df_sim['consumo_kwh'], 
-        name='REAL METER', line=dict(color='black', width=4)
-    ))
+    fig1.add_trace(go.Scatter(x=df_sim['hora'], y=df_sim['consumo_kwh'], name='REAL METER', line=dict(color='black', width=4)))
 
-    fig1.update_layout(
-        height=600, 
-        margin=dict(l=20, r=20, t=20, b=20),
-        xaxis=dict(title="Hour of Day", dtick=1),
-        yaxis=dict(title="Power (kW)"),
-        legend=dict(orientation="h", y=1.02, x=0.5, xanchor="center")
-    )
+    fig1.update_layout(height=600, margin=dict(l=20, r=20, t=20, b=20), xaxis=dict(title="Hour of Day", dtick=1), yaxis=dict(title="Power (kW)"), legend=dict(orientation="h", y=1.02, x=0.5, xanchor="center"))
     st.plotly_chart(fig1, use_container_width=True)
 
-    # Secondary Charts Row
     c1, c2 = st.columns(2)
-    
     with c1:
         st.subheader("🧩 Load Composition")
-        # Calculate sums for pie chart
         pie_cols = [l[0] for l in layers]
         pie_names = [l[1] for l in layers]
         values = df_sim[pie_cols].sum()
-        
-        fig_pie = px.pie(values=values, names=pie_names, hole=0.4)
-        st.plotly_chart(fig_pie, use_container_width=True)
+        st.plotly_chart(px.pie(values=values, names=pie_names, hole=0.4), use_container_width=True)
         
         st.subheader("📉 Correlation Check")
-        fig_corr = px.scatter(
-            df_sim, x='consumo_kwh', y='sim_total', 
-            trendline="ols", labels={'consumo_kwh': 'Real', 'sim_total': 'Simulated'}
-        )
-        st.plotly_chart(fig_corr, use_container_width=True)
+        st.plotly_chart(px.scatter(df_sim, x='consumo_kwh', y='sim_total', trendline="ols", labels={'consumo_kwh': 'Real', 'sim_total': 'Simulated'}), use_container_width=True)
 
     with c2:
         st.subheader("⚠️ Hourly Error (kW)")
-        fig_err = px.bar(
-            df_sim, x='hora', y='error_kw', 
-            color='error_kw', color_continuous_scale='RdBu_r'
-        )
-        st.plotly_chart(fig_err, use_container_width=True)
+        st.plotly_chart(px.bar(df_sim, x='hora', y='error_kw', color='error_kw', color_continuous_scale='RdBu_r'), use_container_width=True)
         
         st.subheader("🔋 Cumulative Energy (kWh)")
         fig_cum = go.Figure()
@@ -446,27 +376,26 @@ def show_nilm_page(df_consumo, df_clima):
         fig_cum.add_trace(go.Scatter(x=df_sim['hora'], y=df_sim['sim_total'].cumsum(), name="Sim Acc.", line=dict(dash='dash')))
         st.plotly_chart(fig_cum, use_container_width=True)
 
-    # Data Table
     st.divider()
     with st.expander("Show Detailed Data Table"):
         st.dataframe(df_sim.style.format(precision=2), use_container_width=True)
 
-
 # ==========================================
-# 4. ENTRY POINT (With Dummy Data)
+# 4. ENTRY POINT (For Testing)
 # ==========================================
 if __name__ == "__main__":
-    # Generating dummy data for demonstration
-    dates = pd.date_range(start="2023-01-01", end="2023-12-31", freq="h")
+    # This config only runs if executed directly, NOT when imported
+    st.set_page_config(page_title="NILM Digital Twin", layout="wide")
     
-    # Create random consumption pattern
+    # Dummy Data Generation
+    dates = pd.date_range(start="2023-01-01", end="2023-12-31", freq="h")
     np.random.seed(42)
     base_load = 20 + np.random.normal(0, 2, len(dates))
     work_load = np.where(dates.dayofweek < 5, 50, 10) * np.where((dates.hour > 8) & (dates.hour < 18), 1, 0)
     total_load = base_load + work_load + np.random.normal(0, 5, len(dates))
     
-    # Create dataframe
     df_cons = pd.DataFrame({'fecha': dates, 'consumo_kwh': np.abs(total_load)})
     df_clim = pd.DataFrame({'fecha': dates, 'temperatura_c': 15 + 10 * np.sin(np.linspace(0, 3.14 * 2 * 365, len(dates)))})
     
+    # Execute the function
     show_nilm_page(df_cons, df_clim)
