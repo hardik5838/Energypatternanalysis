@@ -3,8 +3,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
-from sklearn.metrics 
-import mean_squared_error
+from sklearn.metrics import mean_squared_error
 
 # ==========================================
 # 1. LOGIC ENGINE (Helper Functions)
