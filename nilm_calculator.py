@@ -3,170 +3,369 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
+import datetime
+
+# Configuration for Page Layout
+st.set_page_config(page_title="NILM Digital Twin", layout="wide")
 
 # ==========================================
 # 1. LOGIC ENGINE
 # ==========================================
+
 def generate_load_curve(hours, start, end, max_kw, ramp_up, ramp_down, dips=None):
+    """
+    Generates a load curve with ramps and specific hourly dips.
+    """
     if dips is None: dips = []
+    
     curve = np.zeros(len(hours))
+    
     for i, h in enumerate(hours):
         val = 0.0
+        # Basic Window
         if start <= h < end:
             val = 1.0
-            # Apply ramp up/down logic safely
-            if h < (start + ramp_up) and ramp_up > 0: val = (h - start) / ramp_up
-            if h >= (end - ramp_down) and ramp_down > 0: val = (end - h) / ramp_down
+            
+            # Ramp Up
+            if ramp_up > 0 and h < (start + ramp_up):
+                val = (h - start) / ramp_up
+            
+            # Ramp Down
+            if ramp_down > 0 and h >= (end - ramp_down):
+                val = (end - h) / ramp_down
+            
+            # Apply Dips (Percentage Drop)
+            # dip['hour'] is the hour index, dip['percent'] is how much to drop (e.g. 0.3 for 30% drop)
             for dip in dips:
-                if int(h) == int(dip['hour']): val *= dip['factor']
+                if int(h) == int(dip['hour']):
+                    # If dip is 40%, we multiply by 0.6
+                    factor = 1.0 - (dip['percent'] / 100.0)
+                    val *= factor
+                    
         curve[i] = np.clip(val, 0.0, 1.0) * max_kw
+        
     return curve
+
+def get_tariff_periods(is_weekend):
+    """
+    Returns list of tuples (start, end, color, name) based on user definition.
+    Cheap: 0-8 (Weekends all day)
+    Medium: 8-9, 14-18, 22-24
+    Expensive: 9-14, 18-22
+    """
+    # Colors with transparency
+    c_cheap = "rgba(46, 204, 113, 0.2)"   # Green
+    c_med = "rgba(241, 196, 15, 0.2)"     # Yellow
+    c_exp = "rgba(231, 76, 60, 0.2)"      # Red
+
+    if is_weekend:
+        return [(0, 24, c_cheap, "Cheap")]
+    
+    # Workday Schedule
+    periods = [
+        (0, 8, c_cheap, "Cheap"),
+        (8, 9, c_med, "Medium"),
+        (9, 14, c_exp, "Expensive"),
+        (14, 18, c_med, "Medium"),
+        (18, 22, c_exp, "Expensive"),
+        (22, 24, c_med, "Medium")
+    ]
+    return periods
 
 def run_simulation(df_avg, config):
     df = df_avg.copy()
     hours = df['hora'].values
     
-    # Use .get() to provide safety against KeyErrors
+    # 1. Base Loads
     df['sim_base'] = np.full(len(hours), config.get('base_kw', 0))
     
-    # Ventilation
+    # 2. Ventilation
     df['sim_vent'] = generate_load_curve(
-        hours, config.get('vent_s', 0), config.get('vent_e', 24), 
-        config.get('vent_kw', 0), config.get('vent_ru', 0.5), config.get('vent_rd', 0.5)
+        hours, config['vent_s'], config['vent_e'], 
+        config['vent_kw'], config.get('vent_ru', 0.5), config.get('vent_rd', 0.5)
     )
     
-    # Lighting - FIXED: explicitly providing ramp up (ru) and ramp down (rd)
-    df['sim_light'] = generate_load_curve(
-        hours, config.get('light_s', 0), config.get('light_e', 24), 
-        config.get('light_kw', 0), 
-        config.get('light_ru', 0.5), # Default 0.5 if missing
-        config.get('light_rd', 0.5)  # Default 0.5 if missing
+    # 3. Lighting (with smart night logic)
+    raw_light = generate_load_curve(
+        hours, config['light_s'], config['light_e'], 
+        config['light_kw'], config.get('light_ru', 0.5), config.get('light_rd', 0.5)
     ) * config.get('light_fac', 1.0)
     
-    # Minimum night lighting
-    is_off = (df['sim_light'] < (config.get('light_kw', 0) * 0.1))
-    df.loc[is_off, 'sim_light'] = config.get('light_kw', 0) * config.get('light_sec', 0.1)
+    # Minimum night lighting logic
+    min_light = config['light_kw'] * config.get('light_sec', 0.1)
+    df['sim_light'] = np.maximum(raw_light, min_light)
 
-    # HVAC
+    # 4. HVAC
     if config.get('hvac_mode') == "Constant":
-        df['sim_therm'] = generate_load_curve(hours, config.get('therm_s', 0), config.get('therm_e', 24), config.get('therm_kw', 0), 1, 1)
+        df['sim_therm'] = generate_load_curve(hours, config['therm_s'], config['therm_e'], config['therm_kw'], 1, 1)
     else:
+        # Simple Degree-Day Logic
         delta = (np.maximum(0, df['temperatura_c'] - config.get('set_c', 24)) + 
                  np.maximum(0, config.get('set_h', 20) - df['temperatura_c']))
         raw = delta * config.get('therm_sens', 5.0)
-        sched = generate_load_curve(hours, config.get('therm_s', 0), config.get('therm_e', 24), 1.0, 1, 1)
-        df['sim_therm'] = np.minimum(raw, config.get('therm_kw', 0)) * sched
+        sched = generate_load_curve(hours, config['therm_s'], config['therm_e'], 1.0, 1, 1)
+        df['sim_therm'] = np.minimum(raw, config['therm_kw']) * sched
 
-    df['sim_total'] = df['sim_base'] + df['sim_vent'] + df['sim_light'] + df['sim_therm']
+    # 5. Occupancy
+    df['sim_occ'] = generate_load_curve(
+        hours, config['occ_s'], config['occ_e'], config['occ_kw'],
+        config.get('occ_ru', 1), config.get('occ_rd', 1), config.get('occ_dips', [])
+    )
+
+    # 6. Variable Processes (1, 2, 3)
+    for i in range(1, 4):
+        p_key = f'proc_{i}'
+        if config.get(f'{p_key}_enabled', False):
+            df[f'sim_{p_key}'] = generate_load_curve(
+                hours, config[f'{p_key}_s'], config[f'{p_key}_e'], config[f'{p_key}_kw'],
+                config[f'{p_key}_ru'], config[f'{p_key}_rd'], config.get(f'{p_key}_dips', [])
+            )
+        else:
+            df[f'sim_{p_key}'] = 0.0
+
+    # Total Sum
+    cols_to_sum = ['sim_base', 'sim_vent', 'sim_light', 'sim_therm', 'sim_occ', 'sim_proc_1', 'sim_proc_2', 'sim_proc_3']
+    df['sim_total'] = df[cols_to_sum].sum(axis=1)
     
     if 'consumo_kwh' in df.columns:
         df['error_kw'] = df['sim_total'] - df['consumo_kwh']
-        df['error_pct'] = (df['error_kw'] / df['consumo_kwh'].replace(0, 1)) * 100
         
     return df
 
 # ==========================================
-# 2. UI LAYOUT
+# 2. UI HELPERS
+# ==========================================
+def render_dips_ui(key_prefix, max_dips=4):
+    """Helper to render dynamic dips input in sidebar"""
+    dips = []
+    with st.expander(f"📉 Dips Configuration ({key_prefix})"):
+        num_dips = st.number_input(f"Count ({key_prefix})", 0, max_dips, 0, key=f"n_dips_{key_prefix}")
+        for i in range(num_dips):
+            c1, c2 = st.columns(2)
+            h = c1.number_input(f"Hour", 0, 23, 13, key=f"h_{key_prefix}_{i}")
+            p = c2.number_input(f"Drop %", 0, 100, 50, key=f"p_{key_prefix}_{i}")
+            dips.append({'hour': h, 'percent': p})
+    return dips
+
+# ==========================================
+# 3. MAIN UI
 # ==========================================
 def show_nilm_page(df_consumo, df_clima):
-    st.title("⚡ Energy Pattern Digital Twin")
-
-    # Column Normalization to lowercase to match logic
-    df_consumo = df_consumo.copy()
-    df_consumo.columns = df_consumo.columns.str.strip().str.lower()
+    st.title("⚡ Advanced Energy Digital Twin")
     
+    # --- DATA PREP ---
+    df_consumo.columns = df_consumo.columns.str.strip().str.lower()
     if not df_clima.empty:
-        df_clima = df_clima.copy()
         df_clima.columns = df_clima.columns.str.strip().str.lower()
         df_merged = pd.merge(df_consumo, df_clima, on='fecha', how='inner')
     else:
         df_merged = df_consumo.copy()
         df_merged['temperatura_c'] = 22.0
 
+    # --- SIDEBAR CONTROLS ---
     with st.sidebar:
-        st.header("🎛️ Fitting Controls")
-        day_type = st.radio("Profile Type", ["Laborable", "Fin de Semana"], horizontal=True)
-        is_weekday = (day_type == "Laborable")
-        mask_day = df_merged['fecha'].dt.dayofweek < 5 if is_weekday else df_merged['fecha'].dt.dayofweek >= 5
-        df_filtered = df_merged[mask_day].copy()
+        st.header("1. Global Filters")
+        
+        # Month Filter
+        all_months = list(range(1, 13))
+        selected_months = st.multiselect("Select Months", all_months, default=all_months)
+        
+        # Day Type
+        day_type = st.radio("Profile Type", ["Workday", "Weekend"], horizontal=True)
+        is_weekday = (day_type == "Workday")
+        
+        st.divider()
+        st.header("2. Infrastructure")
+        
+        # Base & Vent
+        base_kw = st.number_input("Base Load [kW]", 0.0, 5000.0, 20.0)
+        vent_kw = st.number_input("Ventilation [kW]", 0.0, 5000.0, 30.0)
+        v_s, v_e = st.slider("Vent. Schedule", 0, 24, (6, 20))
 
-        with st.expander("1. Infrastructure", expanded=True):
-            base_kw = st.number_input("Base Load [kW]", 0.0, 5000.0, 20.0)
-            vent_kw = st.number_input("Ventilation [kW]", 0.0, 5000.0, 30.0)
-            v_s, v_e = st.slider("Vent. Hours", 0, 24, (6, 20))
+        # Lighting
+        st.subheader("Lighting")
+        light_kw = st.number_input("Light Max [kW]", 0.0, 5000.0, 15.0)
+        l_s, l_e = st.slider("Light Schedule", 0, 24, (7, 21))
+        
+        # HVAC
+        st.subheader("HVAC")
+        therm_kw = st.number_input("HVAC Cap [kW]", 0.0, 10000.0, 40.0)
+        t_s, t_e = st.slider("HVAC Schedule", 0, 24, (8, 19))
+        mode = st.selectbox("HVAC Mode", ["Constant", "Weather Driven"])
+        
+        st.divider()
+        st.header("3. Variable Processes")
+        
+        # Occupancy Curve
+        st.subheader("👥 Occupancy")
+        occ_kw = st.number_input("Occupancy Max [kW]", 0.0, 5000.0, 10.0)
+        occ_s, occ_e = st.slider("Occ. Schedule", 0, 24, (8, 18))
+        occ_dips = render_dips_ui("occ")
+        
+        # 3 Generic Variable Processes
+        proc_configs = {}
+        for i in range(1, 4):
+            with st.expander(f"⚙️ Custom Process {i}"):
+                enabled = st.checkbox(f"Enable Process {i}", value=(i==1))
+                name = st.text_input(f"Name {i}", value=f"Process {i}")
+                color = st.color_picker(f"Color {i}", value="#9b59b6")
+                p_kw = st.number_input(f"Max kW {i}", 0.0, 5000.0, 50.0)
+                p_s, p_e = st.slider(f"Schedule {i}", 0, 24, (9, 17))
+                c1, c2 = st.columns(2)
+                ru = c1.number_input(f"Ramp Up (h) {i}", 0.0, 5.0, 1.0)
+                rd = c2.number_input(f"Ramp Down (h) {i}", 0.0, 5.0, 1.0)
+                
+                # Dips for this process
+                p_dips = render_dips_ui(f"proc_{i}")
+                
+                proc_configs.update({
+                    f'proc_{i}_enabled': enabled,
+                    f'proc_{i}_name': name,
+                    f'proc_{i}_color': color,
+                    f'proc_{i}_kw': p_kw,
+                    f'proc_{i}_s': p_s, f'proc_{i}_e': p_e,
+                    f'proc_{i}_ru': ru, f'proc_{i}_rd': rd,
+                    f'proc_{i}_dips': p_dips
+                })
 
-        with st.expander("2. Lighting", expanded=True):
-            light_kw = st.number_input("Light Max [kW]", 0.0, 5000.0, 15.0)
-            l_fac = st.slider("Op. Factor %", 0.0, 1.0, 0.9)
-            l_s, l_e = st.slider("Light Hours", 0, 24, (7, 21))
+    # --- PROCESSING ---
+    
+    # 1. Filter Data
+    mask_month = df_merged['fecha'].dt.month.isin(selected_months)
+    mask_day = df_merged['fecha'].dt.dayofweek < 5 if is_weekday else df_merged['fecha'].dt.dayofweek >= 5
+    df_filtered = df_merged[mask_month & mask_day].copy()
 
-        with st.expander("3. HVAC", expanded=False):
-            therm_kw = st.number_input("HVAC Cap [kW]", 0.0, 10000.0, 40.0)
-            t_s, t_e = st.slider("HVAC Hours", 0, 24, (8, 19))
-            mode = st.selectbox("Mode", ["Constant", "Weather Driven"])
-            sens, sc, sh = 5.0, 24, 20
-            if mode == "Weather Driven":
-                sens = st.slider("Sensitivity", 1.0, 20.0, 5.0)
-                sc = st.number_input("Cool Set", 18, 30, 24)
-                sh = st.number_input("Heat Set", 15, 25, 20)
+    if df_filtered.empty:
+        st.warning("No data for selected filters.")
+        return
 
-    # Aggregation
+    # 2. Aggregate
     df_avg = df_filtered.groupby(df_filtered['fecha'].dt.hour).agg({
         'consumo_kwh': 'mean', 'temperatura_c': 'mean'
     }).reset_index().rename(columns={'fecha': 'hora'})
 
-    # Building the config - ENSURING ALL KEYS ARE PRESENT
+    # 3. Build Config
     config = {
         'base_kw': base_kw, 
-        'vent_kw': vent_kw, 'vent_s': v_s, 'vent_e': v_e, 'vent_ru': 0.5, 'vent_rd': 0.5,
-        'light_kw': light_kw, 'light_s': l_s, 'light_e': l_e, 'light_fac': l_fac, 'light_sec': 0.1, 
-        'light_ru': 0.5, 'light_rd': 0.5,
-        'therm_kw': therm_kw, 'therm_s': t_s, 'therm_e': t_e, 'hvac_mode': mode, 'therm_sens': sens, 'set_c': sc, 'set_h': sh
+        'vent_kw': vent_kw, 'vent_s': v_s, 'vent_e': v_e,
+        'light_kw': light_kw, 'light_s': l_s, 'light_e': l_e,
+        'therm_kw': therm_kw, 'therm_s': t_s, 'therm_e': t_e, 'hvac_mode': mode,
+        'occ_kw': occ_kw, 'occ_s': occ_s, 'occ_e': occ_e, 'occ_dips': occ_dips,
+        'set_c': 24, 'set_h': 20, 'therm_sens': 5.0
     }
-    
+    config.update(proc_configs)
+
+    # 4. Simulate
     df_sim = run_simulation(df_avg, config)
 
-    # --- THE 6 CHARTS ---
-    st.subheader(f"📊 Visualization Dashboard: {day_type}")
+    # --- DASHBOARD ---
     
+    # Chart 1: Main Full Width
+    st.markdown("### 📈 Main Load Profile Analysis")
+    
+    fig1 = go.Figure()
+    
+    # Add Tariff Backgrounds
+    tariff_periods = get_tariff_periods(not is_weekday)
+    for start, end, color, name in tariff_periods:
+        fig1.add_vrect(
+            x0=start, x1=end, 
+            fillcolor=color, opacity=1, 
+            layer="below", line_width=0,
+            annotation_text=name, annotation_position="top left"
+        )
+
+    # Add Stacked Simulation Layers
+    layers = [
+        ('sim_base', 'Base Load', '#7f8c8d'),
+        ('sim_vent', 'Ventilation', '#3498db'),
+        ('sim_light', 'Lighting', '#f1c40f'),
+        ('sim_therm', 'HVAC', '#e74c3c'),
+        ('sim_occ', 'Occupancy', '#e67e22')
+    ]
+    
+    # Add Custom Processes to layers
+    for i in range(1, 4):
+        if config[f'proc_{i}_enabled']:
+            layers.append((f'sim_proc_{i}', config[f'proc_{i}_name'], config[f'proc_{i}_color']))
+
+    for col, name, color in layers:
+        fig1.add_trace(go.Scatter(
+            x=df_sim['hora'], y=df_sim[col], 
+            stackgroup='one', name=name, 
+            mode='none', fillcolor=color
+        ))
+
+    # Real Consumption Line
+    fig1.add_trace(go.Scatter(
+        x=df_sim['hora'], y=df_sim['consumo_kwh'], 
+        name='REAL METER', line=dict(color='black', width=4)
+    ))
+
+    fig1.update_layout(
+        height=600, 
+        margin=dict(l=20, r=20, t=20, b=20),
+        xaxis=dict(title="Hour of Day", dtick=1),
+        yaxis=dict(title="Power (kW)"),
+        legend=dict(orientation="h", y=1.02, x=0.5, xanchor="center")
+    )
+    st.plotly_chart(fig1, use_container_width=True)
+
+    # Secondary Charts Row
     c1, c2 = st.columns(2)
     
     with c1:
-        # Chart 1: Distribution
-        fig1 = go.Figure()
-        layers = [('sim_base', 'Base', '#bdc3c7'), ('sim_vent', 'Vent.', '#3498db'), 
-                  ('sim_therm', 'HVAC', '#e74c3c'), ('sim_light', 'Light', '#f1c40f')]
-        for col, name, color in layers:
-            fig1.add_trace(go.Scatter(x=df_sim['hora'], y=df_sim[col], stackgroup='one', name=name, line=dict(width=0, color=color)))
-        fig1.add_trace(go.Scatter(x=df_sim['hora'], y=df_sim['consumo_kwh'], name='REAL', line=dict(color='black', width=3)))
-        st.plotly_chart(fig1, use_container_width=True)
-
-        # Chart 2: Mix
-        mix = df_sim[['sim_base', 'sim_vent', 'sim_therm', 'sim_light']].sum()
-        st.plotly_chart(px.pie(values=mix.values, names=mix.index, title="Load Mix Split"), use_container_width=True)
-
-        # Chart 3: Correlation
-        st.plotly_chart(px.scatter(df_sim, x='consumo_kwh', y='sim_total', trendline="ols", title="Real vs Simulated Correlation"), use_container_width=True)
+        st.subheader("🧩 Load Composition")
+        # Calculate sums for pie chart
+        pie_cols = [l[0] for l in layers]
+        pie_names = [l[1] for l in layers]
+        values = df_sim[pie_cols].sum()
+        
+        fig_pie = px.pie(values=values, names=pie_names, hole=0.4)
+        st.plotly_chart(fig_pie, use_container_width=True)
+        
+        st.subheader("📉 Correlation Check")
+        fig_corr = px.scatter(
+            df_sim, x='consumo_kwh', y='sim_total', 
+            trendline="ols", labels={'consumo_kwh': 'Real', 'sim_total': 'Simulated'}
+        )
+        st.plotly_chart(fig_corr, use_container_width=True)
 
     with c2:
-        # Chart 4: Hourly Error
-        st.plotly_chart(px.bar(df_sim, x='hora', y='error_kw', title="Hourly Fitting Error (kW)", color='error_kw', color_continuous_scale='RdBu_r'), use_container_width=True)
+        st.subheader("⚠️ Hourly Error (kW)")
+        fig_err = px.bar(
+            df_sim, x='hora', y='error_kw', 
+            color='error_kw', color_continuous_scale='RdBu_r'
+        )
+        st.plotly_chart(fig_err, use_container_width=True)
+        
+        st.subheader("🔋 Cumulative Energy (kWh)")
+        fig_cum = go.Figure()
+        fig_cum.add_trace(go.Scatter(x=df_sim['hora'], y=df_sim['consumo_kwh'].cumsum(), name="Real Acc.", fill='tozeroy'))
+        fig_cum.add_trace(go.Scatter(x=df_sim['hora'], y=df_sim['sim_total'].cumsum(), name="Sim Acc.", line=dict(dash='dash')))
+        st.plotly_chart(fig_cum, use_container_width=True)
 
-        # Chart 5: Cumulative
-        fig5 = go.Figure()
-        fig5.add_trace(go.Scatter(x=df_sim['hora'], y=df_sim['consumo_kwh'].cumsum(), name="Real Acc.", fill='tozeroy'))
-        fig5.add_trace(go.Scatter(x=df_sim['hora'], y=df_sim['sim_total'].cumsum(), name="Sim Acc."))
-        st.plotly_chart(fig5, use_container_width=True)
-
-        # Chart 6: Error Map
-        st.write("**Error Percentage per Hour**")
-        fig6 = px.imshow(df_sim['error_pct'].values.reshape(1, -1), color_continuous_scale='Plasma', aspect="auto")
-        st.plotly_chart(fig6, use_container_width=True)
-
-    # --- TABLE & EXPORT ---
+    # Data Table
     st.divider()
-    st.subheader("📋 Exportable Distribution Table")
-    st.dataframe(df_sim.style.format(precision=2), use_container_width=True)
+    with st.expander("Show Detailed Data Table"):
+        st.dataframe(df_sim.style.format(precision=2), use_container_width=True)
+
+
+# ==========================================
+# 4. ENTRY POINT (With Dummy Data)
+# ==========================================
+if __name__ == "__main__":
+    # Generating dummy data for demonstration
+    dates = pd.date_range(start="2023-01-01", end="2023-12-31", freq="h")
     
-    csv = df_sim.to_csv(index=False).encode('utf-8')
-    st.download_button("Download CSV Data", data=csv, file_name=f"nilm_analysis_{day_type}.csv", mime='text/csv')
+    # Create random consumption pattern
+    np.random.seed(42)
+    base_load = 20 + np.random.normal(0, 2, len(dates))
+    work_load = np.where(dates.dayofweek < 5, 50, 10) * np.where((dates.hour > 8) & (dates.hour < 18), 1, 0)
+    total_load = base_load + work_load + np.random.normal(0, 5, len(dates))
+    
+    # Create dataframe
+    df_cons = pd.DataFrame({'fecha': dates, 'consumo_kwh': np.abs(total_load)})
+    df_clim = pd.DataFrame({'fecha': dates, 'temperatura_c': 15 + 10 * np.sin(np.linspace(0, 3.14 * 2 * 365, len(dates)))})
+    
+    show_nilm_page(df_cons, df_clim)
