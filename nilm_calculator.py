@@ -98,23 +98,37 @@ def run_simulation(df_avg, config):
         config.get('light_nom', 1.0), config.get('light_res', 0.0)
     )
 
-    # 4. HVAC (Split System)
-    delta_T_out = np.abs(df['temperatura_c'] - 20.0) 
-    hvac_1_raw = (delta_T_out / 20.0) * (config['hvac1_kw'] / max(0.5, config['hvac1_cop'])) * 5.0
-    hvac_1_curve = np.clip(hvac_1_raw, 0, config['hvac1_kw'])
+   # 4. HVAC (Thermodynamic Model)
+    # Formula: E = [(U*A*ΔT + Q_int + Q_sol + Q_vent) / COP] * t_op    
+    # Calculate ΔT (Indoor Setpoint - Outdoor Temp)
+    # We use absolute value for load, or max(0, ...) if you only want to model cooling
+    delta_T = np.abs(config['hvac_setpoint'] - df['temperatura_c'])
     
+    # Thermal Transmission (U * A * ΔT)
+    q_transmission = config['hvac_ua'] * delta_T
+    
+    # Internal Gains (scaled by occupancy if available, or fixed)
+    q_internal = config['hvac_q_int']
+    
+    # Solar Gains (Optional: could be scaled by time of day)
+    q_solar = config['hvac_q_sol']
+    
+    # Ventilation Loads
+    q_vent = config['hvac_q_vent']
+    
+    # Total Thermal Load (kW_thermal)
+    total_thermal_load = q_transmission + q_internal + q_solar + q_vent
+    
+    # Electrical Power = (Thermal Load / COP) * Availability
+    # top is handled by hvac_avail (0 to 1 scaling)
     hvac_avail = generate_load_curve(hours, config['hvac_s'], config['hvac_e'], 1.0, 
                                      config['hvac_ru'], config['hvac_rd'], 
-                                     config['hvac1_nom'], config['hvac1_res'])
-    df['sim_hvac_1'] = hvac_1_curve * hvac_avail
-
-    delta_T_in = np.abs(df['temperatura_c'] - config['hvac2_setpoint'])
-    envelope_factor = (1.0 - (config['hvac2_eff'] / 100.0))
-    hvac_2_raw = delta_T_in * envelope_factor * 2.0 
-    hvac_2_curve = np.clip(hvac_2_raw, 0, config['hvac_kw_total'])
-    df['sim_hvac_2'] = hvac_2_curve * hvac_avail
-
-    df['sim_therm'] = df['sim_hvac_1'] + df['sim_hvac_2']
+                                     1.0, config['hvac_res'])
+    
+    hvac_electrical_raw = (total_thermal_load / max(0.1, config['hvac_cop']))
+    
+    # Clip to the physical Max Capacity of the unit
+    df['sim_therm'] = np.clip(hvac_electrical_raw, 0, config['hvac_cap_max']) * hvac_avail
 
     # 5. Occupancy
     df['sim_occ'] = generate_load_curve(
@@ -231,24 +245,25 @@ def show_nilm_page(df_consumo, df_clima):
         
         st.divider()
         # HVAC SPLIT
-        st.subheader("❄️ HVAC Configuration")
-        h_s, h_e = st.slider("HVAC Operation Window", 0, 24, (8, 19))
-        c1, c2 = st.columns(2)
-        h_ru = c1.number_input("HVAC Ramp Up", 0.0, 5.0, 1.0)
-        h_rd = c2.number_input("HVAC Ramp Down", 0.0, 5.0, 1.0)
+       st.subheader("❄️ HVAC Thermodynamic Parameters")
+        h_s, h_e = st.slider("Operation Window (t_op)", 0, 24, (8, 19))
         
-        st.markdown("**HVAC 1.1: Vent/Climatization**")
-        h1_kw = st.number_input("HVAC 1.1 Peak [kW]", 0.0, 5000.0, 20.0)
-        h1_cop = st.slider("COP (Efficiency)", 1.0, 6.0, 3.0)
-        h1_nom = st.slider("HVAC 1.1 Nominal %", 0, 100, 100) / 100.0
+        col1, col2 = st.columns(2)
+        h_ua = col1.number_input("U × A (W/K equivalent)", 0.0, 500.0, 50.0)
+        h_cop = col2.number_input("COP (Efficiency)", 0.5, 6.0, 3.0)
         
-        st.markdown("**HVAC 1.2: Building Envelope**")
-        h2_eff = st.slider("Envelope Efficiency %", 0, 100, 50, help="Higher means better insulation, less load")
-        h2_set = st.slider("Indoor Setpoint [°C]", 16, 30, 24)
+        h_set = st.slider("Setpoint [°C]", 16, 30, 22)
         
-        h_res_on = st.checkbox("HVAC Residual?", value=False)
-        h_res = (st.number_input("HVAC Residual %", 0.0, 100.0, 5.0) / 100.0) if h_res_on else 0.0
-
+        with st.expander("Internal & External Gains (Q)"):
+            h_q_int = st.number_input("Internal Gains (Q_int) [kW]", 0.0, 50.0, 2.0)
+            h_q_sol = st.number_input("Solar Gains (Q_sol) [kW]", 0.0, 50.0, 1.5)
+            h_q_vent = st.number_input("Ventilation Load (Q_vent) [kW]", 0.0, 50.0, 1.0)
+            
+        h_cap_max = st.number_input("Unit Max Electrical Cap [kW]", 0.0, 500.0, 20.0)
+        
+        # Residuals (same as before)
+        h_res_on = st.checkbox("HVAC Residual Consumption?", value=False)
+        h_res = (st.number_input("Res %", 0.0, 100.0, 5.0) / 100.0) if h_res_on else 0.0
         st.divider()
         st.header("3. Variable Processes")
         
@@ -288,7 +303,30 @@ def show_nilm_page(df_consumo, df_clima):
                 })
 
     # --- PROCESSING ---
-    mask_month = df_merged['fecha'].dt.month.isin(selected_months)
+    mask_month = df_merged['fecha'].dt.month.isin(selected_months)E 
+HVAC
+​
+ = 
+COP
+(U×A×ΔT+Q 
+internal
+​
+ +Q 
+solar
+​
+ +Q 
+ventilation
+​
+ )
+​
+ ×t 
+op
+​
+ 
+​
+ 
+
+
     mask_day = df_merged['fecha'].dt.dayofweek < 5 if is_weekday else df_merged['fecha'].dt.dayofweek >= 5
     df_filtered = df_merged[mask_month & mask_day].copy()
 
@@ -304,11 +342,16 @@ def show_nilm_page(df_consumo, df_clima):
         'base_kw': b_kw, 'base_ru': b_ru, 'base_rd': b_rd, 'base_nom': b_nom, 'base_res': b_res,
         'vent_kw': v_kw, 'vent_s': v_s, 'vent_e': v_e, 'vent_ru': v_ru, 'vent_rd': v_rd, 'vent_nom': v_nom, 'vent_res': v_res,
         'light_kw': l_kw, 'light_s': l_s, 'light_e': l_e, 'light_ru': l_ru, 'light_rd': l_rd, 'light_nom': l_nom, 'light_res': l_res,
-        
-        'hvac_s': h_s, 'hvac_e': h_e, 'hvac_ru': h_ru, 'hvac_rd': h_rd,
-        'hvac_kw_total': h1_kw + 50,
-        'hvac1_kw': h1_kw, 'hvac1_cop': h1_cop, 'hvac1_nom': h1_nom, 'hvac1_res': h_res,
-        'hvac2_eff': h2_eff, 'hvac2_setpoint': h2_set,
+        'hvac_s': h_s, 'hvac_e': h_e,
+        'hvac_ua': h_ua,
+        'hvac_cop': h_cop,
+        'hvac_setpoint': h_set,
+        'hvac_q_int': h_q_int,
+        'hvac_q_sol': h_q_sol,
+        'hvac_q_vent': h_q_vent,
+        'hvac_cap_max': h_cap_max,
+        'hvac_ru': 1.0, 'hvac_rd': 1.0, # Default ramps
+        'hvac_res': h_res,
         
         'occ_kw': o_kw, 'occ_s': o_s, 'occ_e': o_e, 'occ_ru': o_ru, 'occ_rd': o_rd, 'occ_nom': o_nom, 'occ_res': o_res, 'occ_dips': occ_dips,
     }
