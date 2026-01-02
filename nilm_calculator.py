@@ -303,29 +303,7 @@ def show_nilm_page(df_consumo, df_clima):
                 })
 
     # --- PROCESSING ---
-    mask_month = df_merged['fecha'].dt.month.isin(selected_months)E 
-HVAC
-​
- = 
-COP
-(U×A×ΔT+Q 
-internal
-​
- +Q 
-solar
-​
- +Q 
-ventilation
-​
- )
-​
- ×t 
-op
-​
- 
-​
- 
-
+    mask_month = df_merged['fecha'].dt.month.isin(selected_months)
 
     mask_day = df_merged['fecha'].dt.dayofweek < 5 if is_weekday else df_merged['fecha'].dt.dayofweek >= 5
     df_filtered = df_merged[mask_month & mask_day].copy()
