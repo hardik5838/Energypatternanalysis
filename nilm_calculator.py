@@ -101,7 +101,7 @@ def run_simulation(df_avg, config):
     # 4. HVAC (Thermodynamic Model)
     # Formula: E = [(U*A*ΔT + Q_int + Q_sol + Q_vent) / COP]
     delta_T = np.abs(config['hvac_setpoint'] - df['temperatura_c'])
-    q_transmission = config['hvac_ua'] * delta_T
+    q_transmission = (config['hvac_ua'] / 1000.0) * delta_T
     total_thermal_load = q_transmission + config['hvac_q_int'] + config['hvac_q_sol'] + config['hvac_q_vent']
     
     # Availability curve (0 to 1) based on schedule and ramps
@@ -239,12 +239,8 @@ def show_nilm_page(df_consumo, df_clima):
             h_q_vent = st.number_input("Ventilation Load [kW]", 0.0, 50.0, 1.0)
         
         h_cap_max = st.number_input("Unit Max Electrical Capacity [kW]", 0.0, 500.0, 20.0)
-        h_res_on = st.checkbox("HVAC Residual Consumption?", value=False)
-        h_res = (st.number_input("Res %", 0.0, 100.0, 5.0) / 100.0) if h_res_on else 0.0
-        
-        # Residuals (same as before)
-        h_res_on = st.checkbox("HVAC Residual Consumption?", value=False)
-        h_res = (st.number_input("Res %", 0.0, 100.0, 5.0) / 100.0) if h_res_on else 0.0
+        h_res_on = st.checkbox("HVAC Residual Consumption?", value=False, key="hvac_res_on_unique")
+        h_res = (st.number_input("Res %", 0.0, 100.0, 5.0, key="hvac_res_val_unique") / 100.0) if h_res_on else 0.0
         st.divider()
         st.header("3. Variable Processes")
         
@@ -285,7 +281,6 @@ def show_nilm_page(df_consumo, df_clima):
 
     # --- PROCESSING ---
     mask_month = df_merged['fecha'].dt.month.isin(selected_months)
-
     mask_day = df_merged['fecha'].dt.dayofweek < 5 if is_weekday else df_merged['fecha'].dt.dayofweek >= 5
     df_filtered = df_merged[mask_month & mask_day].copy()
 
