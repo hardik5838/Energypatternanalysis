@@ -229,7 +229,7 @@ def show_nilm_page(df_consumo, df_clima):
         st.subheader("❄️ HVAC Thermodynamic Parameters")
         h_s, h_e = st.slider("Operation Window (t_op)", 0, 24, (8, 19))
         col1, col2 = st.columns(2)
-        h_ua = col1.number_input("U × A (W/K equivalent)", 0.0, 500.0, 50.0)
+        h_ua = col1.number_input("U × A (W/K equivalent)", 0.0, 10000.0, 50.0)
         h_cop = col2.number_input("COP (Efficiency)", 0.5, 6.0, 3.0)
         h_set = st.slider("Setpoint [°C]", 16, 30, 22)
     
