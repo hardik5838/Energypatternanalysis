@@ -98,36 +98,18 @@ def run_simulation(df_avg, config):
         config.get('light_nom', 1.0), config.get('light_res', 0.0)
     )
 
-   # 4. HVAC (Thermodynamic Model)
-    # Formula: E = [(U*A*ΔT + Q_int + Q_sol + Q_vent) / COP] * t_op    
-    # Calculate ΔT (Indoor Setpoint - Outdoor Temp)
-    # We use absolute value for load, or max(0, ...) if you only want to model cooling
+    # 4. HVAC (Thermodynamic Model)
+    # Formula: E = [(U*A*ΔT + Q_int + Q_sol + Q_vent) / COP]
     delta_T = np.abs(config['hvac_setpoint'] - df['temperatura_c'])
-    
-    # Thermal Transmission (U * A * ΔT)
     q_transmission = config['hvac_ua'] * delta_T
+    total_thermal_load = q_transmission + config['hvac_q_int'] + config['hvac_q_sol'] + config['hvac_q_vent']
     
-    # Internal Gains (scaled by occupancy if available, or fixed)
-    q_internal = config['hvac_q_int']
-    
-    # Solar Gains (Optional: could be scaled by time of day)
-    q_solar = config['hvac_q_sol']
-    
-    # Ventilation Loads
-    q_vent = config['hvac_q_vent']
-    
-    # Total Thermal Load (kW_thermal)
-    total_thermal_load = q_transmission + q_internal + q_solar + q_vent
-    
-    # Electrical Power = (Thermal Load / COP) * Availability
-    # top is handled by hvac_avail (0 to 1 scaling)
+    # Availability curve (0 to 1) based on schedule and ramps
     hvac_avail = generate_load_curve(hours, config['hvac_s'], config['hvac_e'], 1.0, 
                                      config['hvac_ru'], config['hvac_rd'], 
                                      1.0, config['hvac_res'])
     
     hvac_electrical_raw = (total_thermal_load / max(0.1, config['hvac_cop']))
-    
-    # Clip to the physical Max Capacity of the unit
     df['sim_therm'] = np.clip(hvac_electrical_raw, 0, config['hvac_cap_max']) * hvac_avail
 
     # 5. Occupancy
@@ -244,22 +226,21 @@ def show_nilm_page(df_consumo, df_clima):
         l_kw, l_s, l_e, l_ru, l_rd, l_nom, l_res = render_standard_controls("light", "Lighting", 15.0, (7, 21))
         
         st.divider()
-        # HVAC SPLIT
-       st.subheader("❄️ HVAC Thermodynamic Parameters")
+        st.subheader("❄️ HVAC Thermodynamic Parameters")
         h_s, h_e = st.slider("Operation Window (t_op)", 0, 24, (8, 19))
-        
         col1, col2 = st.columns(2)
         h_ua = col1.number_input("U × A (W/K equivalent)", 0.0, 500.0, 50.0)
         h_cop = col2.number_input("COP (Efficiency)", 0.5, 6.0, 3.0)
-        
         h_set = st.slider("Setpoint [°C]", 16, 30, 22)
+    
+        with st.expander("Gains (Q_internal, Q_solar, Q_vent)"):
+            h_q_int = st.number_input("Internal Gains [kW]", 0.0, 50.0, 2.0)
+            h_q_sol = st.number_input("Solar Gains [kW]", 0.0, 50.0, 1.5)
+            h_q_vent = st.number_input("Ventilation Load [kW]", 0.0, 50.0, 1.0)
         
-        with st.expander("Internal & External Gains (Q)"):
-            h_q_int = st.number_input("Internal Gains (Q_int) [kW]", 0.0, 50.0, 2.0)
-            h_q_sol = st.number_input("Solar Gains (Q_sol) [kW]", 0.0, 50.0, 1.5)
-            h_q_vent = st.number_input("Ventilation Load (Q_vent) [kW]", 0.0, 50.0, 1.0)
-            
-        h_cap_max = st.number_input("Unit Max Electrical Cap [kW]", 0.0, 500.0, 20.0)
+        h_cap_max = st.number_input("Unit Max Electrical Capacity [kW]", 0.0, 500.0, 20.0)
+        h_res_on = st.checkbox("HVAC Residual Consumption?", value=False)
+        h_res = (st.number_input("Res %", 0.0, 100.0, 5.0) / 100.0) if h_res_on else 0.0
         
         # Residuals (same as before)
         h_res_on = st.checkbox("HVAC Residual Consumption?", value=False)
@@ -328,9 +309,8 @@ def show_nilm_page(df_consumo, df_clima):
         'hvac_q_sol': h_q_sol,
         'hvac_q_vent': h_q_vent,
         'hvac_cap_max': h_cap_max,
-        'hvac_ru': 1.0, 'hvac_rd': 1.0, # Default ramps
+        'hvac_ru': 1.0, 'hvac_rd': 1.0, 
         'hvac_res': h_res,
-        
         'occ_kw': o_kw, 'occ_s': o_s, 'occ_e': o_e, 'occ_ru': o_ru, 'occ_rd': o_rd, 'occ_nom': o_nom, 'occ_res': o_res, 'occ_dips': occ_dips,
     }
     config.update(proc_configs)
