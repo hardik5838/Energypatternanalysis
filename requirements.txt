@@ -5,3 +5,4 @@ statsmodels
 matplotlib
 requests
 scikit-learn
+scipy
