@@ -101,7 +101,7 @@ def run_simulation(df_avg, config):
     # 2. Ventilation
     df['sim_vent'] = generate_load_curve(
         hours, config['vent_s'], config['vent_e'], 
-        config['vent_kw'], config.get('vent_ru', 0.5), config.get('vent_rd', 0.5),
+        config['vent_kw'], config.get('vent_ru', 0), config.get('vent_rd', 0),
         config.get('vent_nom', 1.0), config.get('vent_res', 0.0)
     )
     
@@ -160,13 +160,38 @@ def run_simulation(df_avg, config):
 # 2. AUTO-CALIBRATION & UI HELPERS
 # ==========================================
 
-def run_optimizer(df_avg):
+def run_optimizer(df_avg, m):
     max_load = df_avg['consumo_kwh'].max()
-    bounds = [(0, max_load*0.6), (0, max_load), (5, 10), (0, max_load), (17, 22), (0, max_load), (4, 10), (16, 23), (10, 500)]
+    
+    # We define search bounds around the medical benchmarks (+/- 30%)
+    # This guides the AI to stay within a physical reality for medical buildings
+    bounds = [
+        (0, max_load * 0.4),                  # 0: Base Load kW
+        (m['vent_kw']*0.7, m['vent_kw']*1.3),   # 1: Vent kW
+        (5, 9),                               # 2: Vent Start
+        (m['light_kw']*0.7, m['light_kw']*1.3), # 3: Light kW
+        (17, 22),                             # 4: Light End
+        (m['hvac_therm_kw']/4, m['hvac_therm_kw']/2), # 5: HVAC Elec Max
+        (4, 10),                              # 6: HVAC Start
+        (16, 23),                             # 7: HVAC End
+        (m['ua']*0.8, m['ua']*1.2)            # 8: UA Heat Loss
+    ]
+    
     def obj(p, d):
-        c = {'base_kw': p[0], 'vent_kw': p[1], 'vent_s': int(p[2]), 'vent_e': 19, 'light_kw': p[3], 'light_s': 7, 'light_e': int(p[4]), 'hvac_cap_max': p[5], 'hvac_s': int(p[6]), 'hvac_e': int(p[7]), 'hvac_ua': p[8], 'hvac_setpoint': 22, 'hvac_cop': 3.0, 'hvac_q_int': 2.0, 'hvac_q_sol': 1.0, 'hvac_q_vent': 1.0, 'hvac_res': 0.05, 'hvac_ru': 1.0, 'hvac_rd': 1.0, 'occ_kw': 5.0, 'occ_s': 8, 'occ_e': 18}
+        # Maps the AI's guesses to a config dictionary
+        c = {
+            'base_kw': p[0], 'vent_kw': p[1], 'vent_s': int(p[2]), 'vent_e': 19, 
+            'light_kw': p[3], 'light_s': 7, 'light_e': int(p[4]), 
+            'hvac_cap_max': p[5], 'hvac_s': int(p[6]), 'hvac_e': int(p[7]), 
+            'hvac_ua': p[8], 'hvac_setpoint': 22, 'hvac_cop': 3.0, 
+            'hvac_q_int': 2.0, 'hvac_q_sol': 1.0, 'hvac_q_vent': 1.0, 
+            'hvac_res': 0.05, 'hvac_ru': 1.0, 'hvac_rd': 1.0, 
+            'occ_kw': 5.0, 'occ_s': 8, 'occ_e': 18
+        }
         return np.sqrt(mean_squared_error(d['consumo_kwh'], run_simulation(d, c)['sim_total']))
-    return differential_evolution(obj, bounds, args=(df_avg,), maxiter=15, popsize=10, seed=42).x
+
+    result = differential_evolution(obj, bounds, args=(df_avg,), maxiter=15, popsize=10, seed=42)
+    return result.x
 
 def render_standard_controls(prefix, label, default_kw, default_sched):
     st.subheader(f"{label} Settings")
@@ -229,7 +254,7 @@ def render_standard_controls(prefix, label, default_kw, default_sched):
 # ==========================================
 
 def show_nilm_page(df_consumo, df_clima):
-    st.title("⚡ Advanced Energy Digital Twin (Full Control)")
+    st.title("Advanced Energy Digital Twin (Full Control)")
     
     # --- DATA PREP ---
     df_consumo.columns = df_consumo.columns.str.strip().str.lower()
@@ -243,6 +268,18 @@ def show_nilm_page(df_consumo, df_clima):
     # --- SIDEBAR ---
     with st.sidebar:
         st.header("1. Global Filters")
+        # --- NEW MEDICAL INTELLIGENCE BLOCK ---
+        total_annual_kwh = df_merged['consumo_kwh'].sum() * (8760 / len(df_merged))
+        m = estimate_medical_office_metrics(total_annual_kwh)
+        st.info(f"Est. Size: {m['area']:,.0f} m² | UA: {m['ua']:.1f} W/K")
+        
+        if st.button("Apply Medical Benchmarks", type="primary", use_container_width=True):
+            st.session_state['light_kw'] = m['light_kw']
+            st.session_state['vent_kw'] = m['vent_kw']
+            st.session_state['hvac_ua'] = m['ua']
+            st.session_state['hvac_cap_max'] = m['hvac_therm_kw'] / 3.0
+            st.rerun()
+            
         all_months = list(range(1, 13))
         selected_months = st.multiselect("Select Months", all_months, default=all_months)
         day_type = st.radio("Profile Type", ["Workday", "Weekend"], horizontal=True)
@@ -250,17 +287,19 @@ def show_nilm_page(df_consumo, df_clima):
         
         st.divider()
         
-        # --- AUTO CALIBRATION BUTTON ---
-        c_auto, c_info = st.columns([3, 1])
-        if c_auto.button("⚡ Auto-Calibrate Model", type="primary"):
-            # Filter data for optimization
+# --- AUTO CALIBRATION BUTTON ---
+        if st.button("⚡ AI Auto-Calibrate (Medical)", type="primary", use_container_width=True):
             mask_month = df_merged['fecha'].dt.month.isin(selected_months)
-            mask_day = df_merged['fecha'].dt.dayofweek < 5 if is_weekday else df_merged['fecha'].dt.dayofweek >= 5
-            df_calib = df_merged[mask_month & mask_day].groupby(df_merged['fecha'].dt.hour).agg({'consumo_kwh':'mean', 'temperatura_c':'mean'}).reset_index().rename(columns={'fecha': 'hora'})
+            mask_day = (df_merged['fecha'].dt.dayofweek < 5) if is_weekday else (df_merged['fecha'].dt.dayofweek >= 5)
+            df_calib = df_merged[mask_month & mask_day].groupby(df_merged['fecha'].dt.hour).agg({
+                'consumo_kwh':'mean', 'temperatura_c':'mean'
+            }).reset_index().rename(columns={'fecha': 'hora'})
             
-            with st.spinner("🤖 AI is optimizing parameters..."):
-                opt = run_optimizer(df_calib)
-                # UPDATE SESSION STATE with optimized values
+            with st.spinner("🤖 AI is fitting curves..."):
+                # We pass 'm' (medical metrics) here to bound the AI
+                opt = run_optimizer(df_calib, m)
+                
+                # Update Session State so sliders move automatically
                 st.session_state['base_kw'] = float(opt[0])
                 st.session_state['vent_kw'] = float(opt[1])
                 st.session_state['vent_sched'] = (int(opt[2]), 19)
@@ -269,51 +308,29 @@ def show_nilm_page(df_consumo, df_clima):
                 st.session_state['hvac_cap_max'] = float(opt[5])
                 st.session_state['hvac_win'] = (int(opt[6]), int(opt[7]))
                 st.session_state['hvac_ua'] = float(opt[8])
-            st.success("Calibration Applied!")
-            st.rerun() # Refresh to show new slider positions
+                
+            st.success("AI Calibration complete!")
+            st.rerun()
+
             
-        st.divider()
-        st.header("2. Infrastructure Controls")
         
-        # Base Load
-        b_kw, b_s, b_e, b_ru, b_rd, b_nom, b_res = render_standard_controls("base", "Base Load", 20.0, (0, 24))
-
-        st.divider()
-        # Ventilation
-        v_kw, v_s, v_e, v_ru, v_rd, v_nom, v_res = render_standard_controls("vent", "Ventilation", 30.0, (6, 20))
-
-        st.divider()
-        # Lighting
-        l_kw, l_s, l_e, l_ru, l_rd, l_nom, l_res = render_standard_controls("light", "Lighting", 15.0, (7, 21))
-        
-        st.divider()
-        st.subheader("❄️ HVAC Thermodynamic Parameters")
-        
-        # HVAC specialized keys
-        if 'hvac_win' not in st.session_state: st.session_state['hvac_win'] = (8, 19)
-        if 'hvac_cap_max' not in st.session_state: st.session_state['hvac_cap_max'] = 20.0
-        if 'hvac_ua' not in st.session_state: st.session_state['hvac_ua'] = 50.0
-
-        h_s, h_e = st.slider("Operation Window (t_op)", 0, 24, key='hvac_win')
+        st.subheader("❄️ HVAC Parameters")
+        h_s, h_e = st.slider("Operation Window", 0, 24, key='hvac_win')
         
         col1, col2 = st.columns(2)
-        h_ua = col1.number_input("U × A (W/K)", 0.0, 5000.0, key='hvac_ua')
-        h_cop = col2.number_input("COP (Efficiency)", 0.5, 6.0, 3.0, key='hvac_cop')
+        # These keys must match the ones used in the AI calibration block above
+        h_ua = col1.number_input("U × A (W/K)", 0.0, 10000.0, key='hvac_ua')
+        h_cop = col2.number_input("COP", 0.5, 6.0, 3.0, key='hvac_cop')
         h_set = st.slider("Setpoint [°C]", 16, 30, 22, key='hvac_set')
-    
-        with st.expander("Gains (Q_internal, Q_solar, Q_vent)"):
-            h_q_int = st.number_input("Internal Gains [kW]", 0.0, 50.0, 2.0, key='hvac_qi')
-            h_q_sol = st.number_input("Solar Gains [kW]", 0.0, 50.0, 1.5, key='hvac_qs')
-            h_q_vent = st.number_input("Ventilation Load [kW]", 0.0, 50.0, 1.0, key='hvac_qv')
         
-        h_cap_max = st.number_input("Unit Max Electrical Capacity [kW]", 0.0, 500.0, key='hvac_cap_max')
+        h_cap_max = st.number_input("Max Electrical Capacity [kW]", 0.0, 1000.0, key='hvac_cap_max')
         
         # Ramps for HVAC
         c3, c4 = st.columns(2)
         h_ru = c3.number_input("HVAC Ramp Up", 0.0, 5.0, 1.0, key="hvac_ru")
         h_rd = c4.number_input("HVAC Ramp Down", 0.0, 5.0, 1.0, key="hvac_rd")
         
-        h_res_on = st.checkbox("HVAC Residual Consumption?", value=False, key="hvac_res_on_unique")
+        h_res_on = st.checkbox("HVAC Residual Consumption?", value= True, key="hvac_res_on_unique")
         h_res = (st.number_input("Res %", 0.0, 100.0, 5.0, key="hvac_res_val_unique") / 100.0) if h_res_on else 0.0
         
         st.divider()
@@ -323,11 +340,12 @@ def show_nilm_page(df_consumo, df_clima):
         o_kw, o_s, o_e, o_ru, o_rd, o_nom, o_res = render_standard_controls("occ", "Occupancy", 10.0, (8, 18))
         occ_dips = render_dips_ui("occ")
         
-        # Generic Processes
+# Generic Processes
         proc_configs = {}
         for i in range(1, 4):
             with st.expander(f"⚙️ Custom Process {i}"):
-                enabled = st.checkbox(f"Enable Process {i}", value=(i==1), key=f"p_en_{i}")
+                # Set value to False so they are all off by default
+                enabled = st.checkbox(f"Enable Process {i}", value=False, key=f"p_en_{i}")
                 name = st.text_input(f"Name {i}", value=f"Process {i}", key=f"p_name_{i}")
                 color = st.color_picker(f"Color {i}", value="#9b59b6", key=f"p_col_{i}")
                 
@@ -355,7 +373,6 @@ def show_nilm_page(df_consumo, df_clima):
                     f'proc_{i}_nom': p_nom, f'proc_{i}_res': p_res,
                     f'proc_{i}_dips': p_dips
                 })
-
     # --- PROCESSING ---
     mask_month = df_merged['fecha'].dt.month.isin(selected_months)
     mask_day = df_merged['fecha'].dt.dayofweek < 5 if is_weekday else df_merged['fecha'].dt.dayofweek >= 5
