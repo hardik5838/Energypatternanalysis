@@ -157,40 +157,29 @@ def run_simulation(df_avg, config):
     return df
 
 # ==========================================
-# 2. AUTO-CALIBRATION ENGINE
+# 2. AUTO-CALIBRATION & UI HELPERS
 # ==========================================
-
-def objective_function(params, df_real):
-    """
-    Maps 9 optimized variables to the FULL config structure.
-    We optimize only the Critical Variables (Power & Schedule) to avoid chaos.
-    """
-    # Params: [Base_kW, Vent_kW, Vent_Start, Light_kW, Light_End, HVAC_Max, HVAC_Start, HVAC_End, HVAC_UA]
-    config = {
-        'base_kw': params[0],
-        'vent_kw': params[1], 'vent_s': int(params[2]), 'vent_e': 19, # Assume evening end for simplicity in auto
-        'light_kw': params[3], 'light_s': 7, 'light_e': int(params[4]),
-        'hvac_cap_max': params[5], 'hvac_s': int(params[6]), 'hvac_e': int(params[7]),
-        'hvac_ua': params[8], 'hvac_setpoint': 22, 'hvac_cop': 3.0,
-        'hvac_q_int': 2.0, 'hvac_q_sol': 1.0, 'hvac_q_vent': 1.0, 'hvac_res': 0.05,
-        'hvac_ru': 1.0, 'hvac_rd': 1.0,
-        'occ_kw': 5.0, 'occ_s': 8, 'occ_e': 18 # Default low occupancy for Auto
-    }
-    
-    # Run sim
-    df_sim = run_simulation(df_real, config)
-    # Return Error
-    return np.sqrt(mean_squared_error(df_real['consumo_kwh'], df_sim['sim_total']))
 
 def run_optimizer(df_avg):
     max_load = df_avg['consumo_kwh'].max()
-    # Bounds: Base, VentKW, VentStart, LightKW, LightEnd, HVACMax, HVACStart, HVACEnd, HVAC_UA
-    bounds = [
-        (0, max_load*0.6), (0, max_load), (5, 10), (0, max_load), (17, 22),
-        (0, max_load), (4, 10), (16, 23), (10, 500)
-    ]
-    result = differential_evolution(objective_function, bounds, args=(df_avg,), strategy='best1bin', maxiter=15, popsize=10, seed=42)
-    return result.x
+    bounds = [(0, max_load*0.6), (0, max_load), (5, 10), (0, max_load), (17, 22), (0, max_load), (4, 10), (16, 23), (10, 500)]
+    def obj(p, d):
+        c = {'base_kw': p[0], 'vent_kw': p[1], 'vent_s': int(p[2]), 'vent_e': 19, 'light_kw': p[3], 'light_s': 7, 'light_e': int(p[4]), 'hvac_cap_max': p[5], 'hvac_s': int(p[6]), 'hvac_e': int(p[7]), 'hvac_ua': p[8], 'hvac_setpoint': 22, 'hvac_cop': 3.0, 'hvac_q_int': 2.0, 'hvac_q_sol': 1.0, 'hvac_q_vent': 1.0, 'hvac_res': 0.05, 'hvac_ru': 1.0, 'hvac_rd': 1.0, 'occ_kw': 5.0, 'occ_s': 8, 'occ_e': 18}
+        return np.sqrt(mean_squared_error(d['consumo_kwh'], run_simulation(d, c)['sim_total']))
+    return differential_evolution(obj, bounds, args=(df_avg,), maxiter=15, popsize=10, seed=42).x
+
+def render_standard_controls(prefix, label, default_kw, default_sched):
+    st.subheader(f"{label} Settings")
+    k_kw, k_sched = f"{prefix}_kw", f"{prefix}_sched"
+    if k_kw not in st.session_state: st.session_state[k_kw] = float(default_kw)
+    if k_sched not in st.session_state: st.session_state[k_sched] = default_sched
+    kw = st.number_input(f"{label} Max [kW]", 0.0, 10000.0, key=k_kw)
+    s, e = st.slider(f"{label} Schedule", 0, 24, key=k_sched)
+    ru = st.number_input(f"Ramp Up (h)", 0.0, 10.0, 0.5, key=f"{prefix}_ru")
+    rd = st.number_input(f"Ramp Down (h)", 0.0, 10.0, 0.5, key=f"{prefix}_rd")
+    nom = st.slider(f"{label} Nominal %", 0, 100, 100, key=f"{prefix}_nom") / 100.0
+    res_val = (st.number_input(f"Residual %", 0.0, 100.0, 5.0, key=f"{prefix}_res_val") / 100.0) if st.checkbox(f"Residual?", key=f"{prefix}_res_on") else 0.0
+    return kw, s, e, ru, rd, nom, res_val
 
 # ==========================================
 # 3. UI HELPERS
