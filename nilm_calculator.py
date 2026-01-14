@@ -265,14 +265,16 @@ def show_nilm_page(df_consumo, df_clima):
         df_merged = df_consumo.copy()
         df_merged['temperatura_c'] = 22.0
 
-    # --- SIDEBAR ---
+# --- SIDEBAR ---
     with st.sidebar:
         st.header("1. Global Filters")
-        # --- NEW MEDICAL INTELLIGENCE BLOCK ---
+        
+        # Calculate Medical Intelligence Metrics
         total_annual_kwh = df_merged['consumo_kwh'].sum() * (8760 / len(df_merged))
         m = estimate_medical_office_metrics(total_annual_kwh)
         st.info(f"Est. Size: {m['area']:,.0f} m² | UA: {m['ua']:.1f} W/K")
         
+        # Apply Benchmarks Button
         if st.button("Apply Medical Benchmarks", type="primary", use_container_width=True):
             st.session_state['light_kw'] = m['light_kw']
             st.session_state['vent_kw'] = m['vent_kw']
@@ -280,14 +282,13 @@ def show_nilm_page(df_consumo, df_clima):
             st.session_state['hvac_cap_max'] = m['hvac_therm_kw'] / 3.0
             st.rerun()
             
-        all_months = list(range(1, 13))
-        selected_months = st.multiselect("Select Months", all_months, default=all_months)
+        selected_months = st.multiselect("Select Months", list(range(1, 13)), default=list(range(1, 13)))
         day_type = st.radio("Profile Type", ["Workday", "Weekend"], horizontal=True)
         is_weekday = (day_type == "Workday")
         
         st.divider()
         
-# --- AUTO CALIBRATION BUTTON ---
+        # AI Auto-Calibration Button
         if st.button("⚡ AI Auto-Calibrate (Medical)", type="primary", use_container_width=True):
             mask_month = df_merged['fecha'].dt.month.isin(selected_months)
             mask_day = (df_merged['fecha'].dt.dayofweek < 5) if is_weekday else (df_merged['fecha'].dt.dayofweek >= 5)
@@ -296,10 +297,7 @@ def show_nilm_page(df_consumo, df_clima):
             }).reset_index().rename(columns={'fecha': 'hora'})
             
             with st.spinner("🤖 AI is fitting curves..."):
-                # We pass 'm' (medical metrics) here to bound the AI
                 opt = run_optimizer(df_calib, m)
-                
-                # Update Session State so sliders move automatically
                 st.session_state['base_kw'] = float(opt[0])
                 st.session_state['vent_kw'] = float(opt[1])
                 st.session_state['vent_sched'] = (int(opt[2]), 19)
@@ -308,67 +306,65 @@ def show_nilm_page(df_consumo, df_clima):
                 st.session_state['hvac_cap_max'] = float(opt[5])
                 st.session_state['hvac_win'] = (int(opt[6]), int(opt[7]))
                 st.session_state['hvac_ua'] = float(opt[8])
-                
             st.success("AI Calibration complete!")
             st.rerun()
 
-            
+        st.header("2. Infrastructure Controls")
         
+        # IMPORTANT: Assigning function results to variables (b_kw, v_kw, etc.)
+        b_kw, b_s, b_e, b_ru, b_rd, b_nom, b_res = render_standard_controls("base", "Base Load", 20.0, (0, 24))
+        st.divider()
+        v_kw, v_s, v_e, v_ru, v_rd, v_nom, v_res = render_standard_controls("vent", "Ventilation", 30.0, (6, 20))
+        st.divider()
+        l_kw, l_s, l_e, l_ru, l_rd, l_nom, l_res = render_standard_controls("light", "Lighting", 15.0, (7, 21))
+        
+        st.divider()
         st.subheader("❄️ HVAC Parameters")
-        h_s, h_e = st.slider("Operation Window", 0, 24, key='hvac_win')
+        h_win = st.slider("Operation Window", 0, 24, key='hvac_win')
+        h_s, h_e = h_win[0], h_win[1] # Split slider tuple into Start/End
         
         col1, col2 = st.columns(2)
-        # These keys must match the ones used in the AI calibration block above
         h_ua = col1.number_input("U × A (W/K)", 0.0, 10000.0, key='hvac_ua')
         h_cop = col2.number_input("COP", 0.5, 6.0, 3.0, key='hvac_cop')
         h_set = st.slider("Setpoint [°C]", 16, 30, 22, key='hvac_set')
-        
         h_cap_max = st.number_input("Max Electrical Capacity [kW]", 0.0, 1000.0, key='hvac_cap_max')
         
-        # Ramps for HVAC
-        c3, c4 = st.columns(2)
-        h_ru = c3.number_input("HVAC Ramp Up", 0.0, 5.0, 1.0, key="hvac_ru")
-        h_rd = c4.number_input("HVAC Ramp Down", 0.0, 5.0, 1.0, key="hvac_rd")
+        with st.expander("Gains & Ramps"):
+            h_q_int = st.number_input("Internal Gains [kW]", 0.0, 50.0, 2.0, key='hvac_qi')
+            h_q_sol = st.number_input("Solar Gains [kW]", 0.0, 50.0, 1.5, key='hvac_qs')
+            h_q_vent = st.number_input("Ventilation Load [kW]", 0.0, 50.0, 1.0, key='hvac_qv')
+            h_ru = st.number_input("HVAC Ramp Up", 0.0, 5.0, 1.0, key="hvac_ru")
+            h_rd = st.number_input("HVAC Ramp Down", 0.0, 5.0, 1.0, key="hvac_rd")
         
-        h_res_on = st.checkbox("HVAC Residual Consumption?", value= True, key="hvac_res_on_unique")
+        h_res_on = st.checkbox("HVAC Residual Consumption?", value=True, key="hvac_res_on_unique")
         h_res = (st.number_input("Res %", 0.0, 100.0, 5.0, key="hvac_res_val_unique") / 100.0) if h_res_on else 0.0
         
         st.divider()
         st.header("3. Variable Processes")
-        
-        # Occupancy
         o_kw, o_s, o_e, o_ru, o_rd, o_nom, o_res = render_standard_controls("occ", "Occupancy", 10.0, (8, 18))
         occ_dips = render_dips_ui("occ")
         
-# Generic Processes
+        # Custom Processes Loop
         proc_configs = {}
         for i in range(1, 4):
             with st.expander(f"⚙️ Custom Process {i}"):
-                # Set value to False so they are all off by default
                 enabled = st.checkbox(f"Enable Process {i}", value=False, key=f"p_en_{i}")
                 name = st.text_input(f"Name {i}", value=f"Process {i}", key=f"p_name_{i}")
-                color = st.color_picker(f"Color {i}", value="#9b59b6", key=f"p_col_{i}")
-                
-                # Use standard control logic for custom processes manually
                 p_kw = st.number_input(f"Max kW {i}", 0.0, 5000.0, 50.0, key=f"p_kw_{i}")
-                p_s, p_e = st.slider(f"Schedule {i}", 0, 24, (9, 17), key=f"p_sch_{i}")
+                p_sch = st.slider(f"Schedule {i}", 0, 24, (9, 17), key=f"p_sch_{i}")
+                p_s, p_e = p_sch[0], p_sch[1]
                 
-                c1, c2 = st.columns(2)
-                p_ru = c1.number_input(f"Ramp Up {i}", 0.0, 5.0, 1.0, key=f"p_ru_{i}")
-                p_rd = c2.number_input(f"Ramp Down {i}", 0.0, 5.0, 1.0, key=f"p_rd_{i}")
+                # Manual entry for remaining process params
+                p_ru = st.number_input(f"Ramp Up {i}", 0.0, 5.0, 1.0, key=f"p_ru_{i}")
+                p_rd = st.number_input(f"Ramp Down {i}", 0.0, 5.0, 1.0, key=f"p_rd_{i}")
                 p_nom = st.slider(f"Nominal % {i}", 0, 100, 100, key=f"p_nom_{i}") / 100.0
-                
-                res_on_p = st.checkbox(f"Residual {i}?", key=f"p_res_on_{i}")
-                p_res = (st.number_input(f"Res % {i}", 0.0, 100.0, 5.0, key=f"p_res_{i}") / 100.0) if res_on_p else 0.0
-                
+                p_res_on = st.checkbox(f"Residual {i}?", key=f"p_res_on_{i}")
+                p_res = (st.number_input(f"Res % {i}", 0.0, 100.0, 5.0, key=f"p_res_{i}") / 100.0) if p_res_on else 0.0
                 p_dips = render_dips_ui(f"proc_{i}")
                 
                 proc_configs.update({
-                    f'proc_{i}_enabled': enabled,
-                    f'proc_{i}_name': name,
-                    f'proc_{i}_color': color,
-                    f'proc_{i}_kw': p_kw,
-                    f'proc_{i}_s': p_s, f'proc_{i}_e': p_e,
+                    f'proc_{i}_enabled': enabled, f'proc_{i}_name': name,
+                    f'proc_{i}_kw': p_kw, f'proc_{i}_s': p_s, f'proc_{i}_e': p_e,
                     f'proc_{i}_ru': p_ru, f'proc_{i}_rd': p_rd,
                     f'proc_{i}_nom': p_nom, f'proc_{i}_res': p_res,
                     f'proc_{i}_dips': p_dips
