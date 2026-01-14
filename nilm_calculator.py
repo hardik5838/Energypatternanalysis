@@ -10,6 +10,22 @@ from scipy.optimize import differential_evolution
 # 1. LOGIC ENGINE (Helper Functions)
 # ==========================================
 
+def estimate_medical_office_metrics(total_annual_kwh):
+    # Benchmark for Mixed Medical/Office (kWh/m2/year)
+    # Medical facilities are energy-dense; using 250 kWh/m2 as a hybrid baseline
+    eui_benchmark = 200 
+    estimated_area = total_annual_kwh / eui_benchmark
+    ua_value = estimated_area * 1
+    
+    guesses = {
+        "area": estimated_area,
+        "light_kw": (estimated_area * 15) / 1000,   # 15 W/m2
+        "hvac_therm_kw": (estimated_area * 120) / 1000, # 120 W/m2 Thermal
+        "vent_kw": (estimated_area * 7) / 1000,     # 5 W/m2
+        "ua": ua_value
+    }
+    return guesses
+
 def generate_load_curve(hours, start, end, max_kw, ramp_up, ramp_down, nominal_pct=1.0, residual_pct=0.0, dips=None):
     """
     Generates a load curve with ramps, hourly dips, nominal scaling, and residual consumption.
