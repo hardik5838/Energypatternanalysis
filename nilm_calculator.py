@@ -198,7 +198,7 @@ def render_standard_controls(prefix, label, default_kw, default_sched):
     k_kw, k_sched = f"{prefix}_kw", f"{prefix}_sched"
     if k_kw not in st.session_state: st.session_state[k_kw] = float(default_kw)
     if k_sched not in st.session_state: st.session_state[k_sched] = default_sched
-    kw = st.number_input(f"{label} Max [kW]", 0.0, 50000.0, key=k_kw)
+    kw = st.number_input(f"{label} Max [kW]", 0.0, 500000.0, key=k_kw)
     s, e = st.slider(f"{label} Schedule", 0, 24, key=k_sched)
     ru = st.number_input(f"Ramp Up (h)", 0.0, 10.0, 0.5, key=f"{prefix}_ru")
     rd = st.number_input(f"Ramp Down (h)", 0.0, 10.0, 0.5, key=f"{prefix}_rd")
@@ -233,7 +233,7 @@ def render_standard_controls(prefix, label, default_kw, default_sched):
     if k_sched not in st.session_state: st.session_state[k_sched] = default_sched
 
     # Render with key=... so Streamlit binds them to state
-    kw = st.number_input(f"{label} Max [kW]", 0.0, 50000.0, key=k_kw)
+    kw = st.number_input(f"{label} Max [kW]", 0.0, 500000.0, key=k_kw)
     s, e = st.slider(f"{label} Schedule", 0, 24, key=k_sched)
     
     c1, c2 = st.columns(2)
@@ -324,7 +324,7 @@ def show_nilm_page(df_consumo, df_clima):
         h_s, h_e = h_win[0], h_win[1] # Split slider tuple into Start/End
         
         col1, col2 = st.columns(2)
-        h_ua = col1.number_input("U × A (W/K)", 0.0, 50000.0, key='hvac_ua')
+        h_ua = col1.number_input("U × A (W/K)", 0.0, 1000000.0, key='hvac_ua')
         h_cop = col2.number_input("COP", 0.5, 6.0, 3.0, key='hvac_cop')
         h_set = st.slider("Setpoint [°C]", 16, 30, 22, key='hvac_set')
         h_cap_max = st.number_input("Max Electrical Capacity [kW]", 0.0, 1000.0, key='hvac_cap_max')
