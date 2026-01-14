@@ -180,7 +180,7 @@ def run_optimizer(df_avg, m):
     def obj(p, d):
         # Maps the AI's guesses to a config dictionary
         c = {
-            'base_kw': p[0], 'vent_kw': p[1], 'vent_s': int(p[2]), 'vent_e': 19, 
+            'base_kw': p[0], 'base_ru': 0.0, 'base_rd': 0.0, 'vent_kw': p[1], 'vent_s': int(p[2]), 'vent_e': 19, 
             'light_kw': p[3], 'light_s': 7, 'light_e': int(p[4]), 
             'hvac_cap_max': p[5], 'hvac_s': int(p[6]), 'hvac_e': int(p[7]), 
             'hvac_ua': p[8], 'hvac_setpoint': 22, 'hvac_cop': 3.0, 
@@ -299,10 +299,20 @@ def show_nilm_page(df_consumo, df_clima):
             with st.spinner("🤖 AI is fitting curves..."):
                 opt = run_optimizer(df_calib, m)
                 st.session_state['base_kw'] = float(opt[0])
+                st.session_state['base_ru'] = 0.0
                 st.session_state['vent_kw'] = float(opt[1])
                 st.session_state['vent_sched'] = (int(opt[2]), 19)
                 st.session_state['light_kw'] = float(opt[3])
                 st.session_state['light_sched'] = (7, int(opt[4]))
+                # Lighting: 30% standby
+                st.session_state['light_res_on'] = True
+                st.session_state['light_res_val'] = 30.0
+                # Ventilation: 5% standby
+                st.session_state['vent_res_on'] = True
+                st.session_state['vent_res_val'] = 5.0
+                # HVAC: 5% standby
+                st.session_state['hvac_res_on_unique'] = True
+                st.session_state['hvac_res_val_unique'] = 5.0
                 st.session_state['hvac_cap_max'] = float(opt[5])
                 st.session_state['hvac_win'] = (int(opt[6]), int(opt[7]))
                 st.session_state['hvac_ua'] = float(opt[8])
@@ -320,11 +330,11 @@ def show_nilm_page(df_consumo, df_clima):
         
         st.divider()
         st.subheader("❄️ HVAC Parameters")
-        h_win = st.slider("Operation Window", 0, 24, key='hvac_win')
-        h_s, h_e = h_win[0], h_win[1] # Split slider tuple into Start/End
+        h_win = st.slider("Operation Window", 0, 24, value=(8, 19), key='hvac_win')
+        h_s, h_e = h_win[0], h_win[1] 
         
         col1, col2 = st.columns(2)
-        h_ua = col1.number_input("U × A (W/K)", 0.0, 1000000.0, key='hvac_ua')
+        h_ua = col1.number_input("U × A (W/K)", 0.0, 10000.0, key='hvac_ua')
         h_cop = col2.number_input("COP", 0.5, 6.0, 3.0, key='hvac_cop')
         h_set = st.slider("Setpoint [°C]", 16, 30, 22, key='hvac_set')
         h_cap_max = st.number_input("Max Electrical Capacity [kW]", 0.0, 1000.0, key='hvac_cap_max')
@@ -344,31 +354,6 @@ def show_nilm_page(df_consumo, df_clima):
         o_kw, o_s, o_e, o_ru, o_rd, o_nom, o_res = render_standard_controls("occ", "Occupancy", 10.0, (8, 18))
         occ_dips = render_dips_ui("occ")
         
-        # Custom Processes Loop
-        proc_configs = {}
-        for i in range(1, 4):
-            with st.expander(f"⚙️ Custom Process {i}"):
-                enabled = st.checkbox(f"Enable Process {i}", value=False, key=f"p_en_{i}")
-                name = st.text_input(f"Name {i}", value=f"Process {i}", key=f"p_name_{i}")
-                p_kw = st.number_input(f"Max kW {i}", 0.0, 5000.0, 50.0, key=f"p_kw_{i}")
-                p_sch = st.slider(f"Schedule {i}", 0, 24, (9, 17), key=f"p_sch_{i}")
-                p_s, p_e = p_sch[0], p_sch[1]
-                
-                # Manual entry for remaining process params
-                p_ru = st.number_input(f"Ramp Up {i}", 0.0, 5.0, 1.0, key=f"p_ru_{i}")
-                p_rd = st.number_input(f"Ramp Down {i}", 0.0, 5.0, 1.0, key=f"p_rd_{i}")
-                p_nom = st.slider(f"Nominal % {i}", 0, 100, 100, key=f"p_nom_{i}") / 100.0
-                p_res_on = st.checkbox(f"Residual {i}?", key=f"p_res_on_{i}")
-                p_res = (st.number_input(f"Res % {i}", 0.0, 100.0, 5.0, key=f"p_res_{i}") / 100.0) if p_res_on else 0.0
-                p_dips = render_dips_ui(f"proc_{i}")
-                
-                proc_configs.update({
-                    f'proc_{i}_enabled': enabled, f'proc_{i}_name': name,
-                    f'proc_{i}_kw': p_kw, f'proc_{i}_s': p_s, f'proc_{i}_e': p_e,
-                    f'proc_{i}_ru': p_ru, f'proc_{i}_rd': p_rd,
-                    f'proc_{i}_nom': p_nom, f'proc_{i}_res': p_res,
-                    f'proc_{i}_dips': p_dips
-                })
     # --- PROCESSING ---
     mask_month = df_merged['fecha'].dt.month.isin(selected_months)
     mask_day = df_merged['fecha'].dt.dayofweek < 5 if is_weekday else df_merged['fecha'].dt.dayofweek >= 5
