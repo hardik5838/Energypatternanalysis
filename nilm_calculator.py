@@ -134,21 +134,9 @@ def run_simulation(df_avg, config):
         config.get('occ_dips', [])
     )
 
-    # 6. Variable Processes (1, 2, 3)
-    for i in range(1, 4):
-        p_key = f'proc_{i}'
-        if config.get(f'{p_key}_enabled', False):
-            df[f'sim_{p_key}'] = generate_load_curve(
-                hours, config[f'{p_key}_s'], config[f'{p_key}_e'], config[f'{p_key}_kw'],
-                config[f'{p_key}_ru'], config[f'{p_key}_rd'],
-                config.get(f'{p_key}_nom', 1.0), config.get(f'{p_key}_res', 0.0),
-                config.get(f'{p_key}_dips', [])
-            )
-        else:
-            df[f'sim_{p_key}'] = 0.0
 
     # Total Sum
-    cols_to_sum = ['sim_base', 'sim_vent', 'sim_light', 'sim_therm', 'sim_occ', 'sim_proc_1', 'sim_proc_2', 'sim_proc_3']
+    cols_to_sum = ['sim_base', 'sim_vent', 'sim_light', 'sim_therm', 'sim_occ']
     df['sim_total'] = df[cols_to_sum].sum(axis=1)
     
     if 'consumo_kwh' in df.columns:
@@ -415,9 +403,7 @@ def show_nilm_page(df_consumo, df_clima):
         ('sim_therm', 'HVAC (Total)', '#e74c3c'),
         ('sim_occ', 'Occupancy', '#e67e22')
     ]
-    for i in range(1, 4):
-        if config[f'proc_{i}_enabled']:
-            layers.append((f'sim_proc_{i}', config[f'proc_{i}_name'], config[f'proc_{i}_color']))
+
 
     for col, name, color in layers:
         fig1.add_trace(go.Scatter(x=df_sim['hora'], y=df_sim[col], stackgroup='one', name=name, mode='none', fillcolor=color))
