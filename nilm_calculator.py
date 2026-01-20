@@ -325,7 +325,7 @@ def show_nilm_page(df_consumo, df_clima):
         h_ua = col1.number_input("U × A (W/K)", 0.0, 100000.0, key='hvac_ua')
         h_cop = col2.number_input("COP", 0.5, 6.0, 3.0, key='hvac_cop')
         h_set = st.slider("Setpoint [°C]", 16, 30, 22, key='hvac_set')
-        h_cap_max = st.number_input("Max Electrical Capacity [kW]", 0.0, 1000.0, key='hvac_cap_max')
+        h_cap_max = st.number_input("Max Electrical Capacity [kW]", 0.0, 10000.0, key='hvac_cap_max')
         
         with st.expander("Gains & Ramps"):
             h_q_int = st.number_input("Internal Gains [kW]", 0.0, 50.0, 2.0, key='hvac_qi')
