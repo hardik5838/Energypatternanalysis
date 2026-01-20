@@ -383,8 +383,10 @@ def show_nilm_page(df_consumo, df_clima):
         'hvac_res': h_res,
         'occ_kw': o_kw, 'occ_s': o_s, 'occ_e': o_e, 'occ_ru': o_ru, 'occ_rd': o_rd, 'occ_nom': o_nom, 'occ_res': o_res, 'occ_dips': occ_dips,
     }
-    config.update(proc_configs)
+    
 
+
+    
     df_sim = run_simulation(df_avg, config)
 
     # --- METRICS & PLOTS ---
