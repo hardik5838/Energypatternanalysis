@@ -62,19 +62,21 @@ def load_asepeyo_energy_data(file_input):
         return pd.DataFrame()
 
 @st.cache_data
-def load_nasa_weather_data(file_path):
+def load_nasa_weather_data(file_input):
     """Carga y procesa el archivo de clima histórico."""
     try:
-        if isinstance(file_path, str) and file_path.startswith('http'):
-            response = requests.get(file_path)
+        # 1. Leer contenido
+        if isinstance(file_input, str) and file_input.startswith('http'):
+            response = requests.get(file_input)
             response.raise_for_status()
             content = response.text
-        elif hasattr(file_path, 'getvalue'): # Es un objeto de Streamlit
-            content = file_path.getvalue().decode("utf-8")
+        elif hasattr(file_input, 'getvalue'):
+            content = file_input.getvalue().decode("utf-8-sig") # utf-8-sig maneja el BOM de Excel
         else:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_input, 'r', encoding='utf-8-sig') as f:
                 content = f.read()
-        
+
+        # 2. Encontrar el inicio de los datos
         lines = content.splitlines()
         start_row = 0
         for i, line in enumerate(lines):
@@ -82,23 +84,43 @@ def load_nasa_weather_data(file_path):
                 start_row = i
                 break
         
+        # 3. Cargar DataFrame
         df = pd.read_csv(io.StringIO('\n'.join(lines[start_row:])))
-        
-        expected_cols = ['YEAR', 'MO', 'DY', 'HR', 'T2M', 'RH2M']
-        if not all(col in df.columns for col in expected_cols):
+        df.columns = df.columns.str.strip() # Limpiar espacios en cabeceras
+
+        # 4. Validar columnas mínimas necesarias
+        required = ['YEAR', 'MO', 'DY', 'HR', 'T2M']
+        if not all(col in df.columns for col in required):
+            st.error(f"Faltan columnas básicas en el clima: {[c for c in required if c not in df.columns]}")
             return pd.DataFrame()
 
-        df['Fecha'] = pd.to_datetime(df[['YEAR', 'MO', 'DY', 'HR']].astype(str).agg('-'.join, axis=1), format='%Y-%m-%d-%H')
-        df.rename(columns={'T2M': 'temperatura_c', 'RH2M': 'humedad_relativa'}, inplace=True)
+        # 5. Crear columna Fecha
+        df['Fecha'] = pd.to_datetime(
+            df[['YEAR', 'MO', 'DY', 'HR']].astype(str).agg('-'.join, axis=1), 
+            format='%Y-%m-%d-%H'
+        )
+
+        # 6. Mapeo flexible de humedad (RH2M o QV2M)
+        rename_dict = {'T2M': 'temperatura_c'}
+        if 'RH2M' in df.columns:
+            rename_dict['RH2M'] = 'humedad_relativa'
+        elif 'QV2M' in df.columns:
+            rename_dict['QV2M'] = 'humedad_relativa'
         
+        df = df.rename(columns=rename_dict)
+        
+        if 'humedad_relativa' not in df.columns:
+            df['humedad_relativa'] = np.nan # Crear columna vacía si no existe ninguna humedad
+
+        # 7. Limpieza de valores nulos (-999 es el nulo de NASA)
         for col in ['temperatura_c', 'humedad_relativa']:
-            df[col] = df[col].replace(-999, np.nan).ffill()
-        
+            df[col] = pd.to_numeric(df[col], errors='coerce').replace(-999, np.nan).ffill()
+
         return df[['Fecha', 'temperatura_c', 'humedad_relativa']]
     except Exception as e:
-        st.error(f"Error al procesar el archivo de clima: {e}")
-        return pd.DataFrame()
-
+        st.error(f"Error procesando clima: {e}")
+        return pd.DataFrame() 
+        
 # --- Barra Lateral ---
 with st.sidebar:
     st.title('⚡ Panel de Control')
