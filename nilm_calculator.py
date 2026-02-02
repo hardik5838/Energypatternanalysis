@@ -415,7 +415,7 @@ def show_nilm_page(df_consumo, df_clima):
 
     c1, c2 = st.columns(2)
     with c1:
-        st.subheader("🧩 Load Composition")
+        st.subheader("Load Composition")
         pie_cols = [l[0] for l in layers]
         pie_names = [l[1] for l in layers]
         values = df_sim[pie_cols].sum()
