@@ -200,7 +200,7 @@ def render_standard_controls(prefix, label, default_kw, default_sched):
 
 def render_dips_ui(key_prefix, max_dips=4):
     dips = []
-    with st.expander(f"📉 Dips Configuration"):
+    with st.expander(f"Dips Configuration"):
         num_dips = st.number_input(f"Count", 0, max_dips, 0, key=f"n_dips_{key_prefix}")
         for i in range(num_dips):
             c1, c2 = st.columns(2)
@@ -277,14 +277,14 @@ def show_nilm_page(df_consumo, df_clima):
         st.divider()
         
         # AI Auto-Calibration Button
-        if st.button("⚡ AI Auto-Calibrate (Medical)", type="primary", use_container_width=True):
+        if st.button("AI Auto-Calibrate (Medical)", type="primary", use_container_width=True):
             mask_month = df_merged['fecha'].dt.month.isin(selected_months)
             mask_day = (df_merged['fecha'].dt.dayofweek < 5) if is_weekday else (df_merged['fecha'].dt.dayofweek >= 5)
             df_calib = df_merged[mask_month & mask_day].groupby(df_merged['fecha'].dt.hour).agg({
                 'consumo_kwh':'mean', 'temperatura_c':'mean'
             }).reset_index().rename(columns={'fecha': 'hora'})
             
-            with st.spinner("🤖 AI is fitting curves..."):
+            with st.spinner("AI is fitting curves..."):
                 opt = run_optimizer(df_calib, m)
                 st.session_state['base_kw'] = float(opt[0])
                 st.session_state['base_ru'] = 0.0
@@ -317,7 +317,7 @@ def show_nilm_page(df_consumo, df_clima):
         l_kw, l_s, l_e, l_ru, l_rd, l_nom, l_res = render_standard_controls("light", "Lighting", 15.0, (7, 21))
         
         st.divider()
-        st.subheader("❄️ HVAC Parameters")
+        st.subheader("HVAC Parameters")
         h_win = st.slider("Operation Window", 0, 24, value=(8, 19), key='hvac_win')
         h_s, h_e = h_win[0], h_win[1] 
         
@@ -378,7 +378,7 @@ def show_nilm_page(df_consumo, df_clima):
     df_sim = run_simulation(df_avg, config)
 
     # --- METRICS & PLOTS ---
-    st.markdown("### 📊 Key Performance Indicators")
+    st.markdown("###Key Performance Indicators")
     total_real = df_sim['consumo_kwh'].sum()
     total_sim = df_sim['sim_total'].sum()
     rmse = np.sqrt(mean_squared_error(df_sim['consumo_kwh'], df_sim['sim_total']))
@@ -389,7 +389,7 @@ def show_nilm_page(df_consumo, df_clima):
     kpi3.metric("Overall Error (RMSE)", f"{rmse:.2f}", delta_color="inverse")
     st.divider()
 
-    st.markdown("### 📈 Main Load Profile Analysis")
+    st.markdown("###Main Load Profile Analysis")
     fig1 = go.Figure()
     
     tariff_periods = get_tariff_periods(not is_weekday)
@@ -421,7 +421,7 @@ def show_nilm_page(df_consumo, df_clima):
         values = df_sim[pie_cols].sum()
         st.plotly_chart(px.pie(values=values, names=pie_names, hole=0.4), use_container_width=True)
     with c2:
-        st.subheader("⚠️ Hourly Error (kW)")
+        st.subheader("Hourly Error (kW)")
         st.plotly_chart(px.bar(df_sim, x='hora', y='error_kw', color='error_kw', color_continuous_scale='RdBu_r'), use_container_width=True)
 
     with st.expander("Show Detailed Data Table"):
