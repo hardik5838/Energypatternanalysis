@@ -6,7 +6,53 @@ import numpy as np
 import os
 import io
 from urllib.parse import quote
-import nilm_calculator  # Asegúrate de que este archivo esté en la misma carpeta
+import nilm_calculator 
+from scipy.interpolate import PchipInterpolator
+
+
+
+def apply_high_fidelity_filter(df, stagnation_threshold=3):
+    """Surgically removes flat 'stagnation' blocks and replaces them with Pchip interpolation."""
+    if df.empty or 'consumo_kwh' not in df.columns:
+        return df
+    
+    df_proc = df.copy().sort_values('Fecha').reset_index(drop=True)
+
+    # 1. Identify identical repeating values (stagnation)
+    is_duplicate = df_proc['consumo_kwh'].diff() == 0
+    group_id = (~is_duplicate).cumsum()
+    counts = df_proc.groupby(group_id)['consumo_kwh'].transform('count')
+    
+    # Identify the 'cores' of the blocks to remove
+    # We keep the start and end of the block to maintain boundary accuracy
+    is_block_core = (counts >= stagnation_threshold) & is_duplicate
+    
+    df_clean = df_proc[~is_block_core].copy()
+
+    if len(df_clean) < 2:
+        return df_proc
+
+    # 2. Shape-Preserving Interpolation
+    t_numeric = (df_clean['Fecha'] - df_clean['Fecha'].min()).dt.total_seconds().values
+    y_values = df_clean['consumo_kwh'].values
+    
+    # Ensure unique time coordinates for the interpolator
+    t_numeric, unique_idx = np.unique(t_numeric, return_index=True)
+    y_values = y_values[unique_idx]
+    
+    pchip_model = PchipInterpolator(t_numeric, y_values)
+    
+    # Generate the 15-min dense timeline
+    total_duration = (df_proc['Fecha'].max() - df_proc['Fecha'].min()).total_seconds()
+    t_dense = np.arange(0, total_duration + 900, 900) 
+    y_dense = pchip_model(t_dense)
+    
+    # Clip negative values (Pchip is good, but just in case of weird data edges)
+    y_dense = np.maximum(y_dense, 0)
+    
+    new_dates = pd.to_datetime(t_dense, unit='s', origin=df_proc['Fecha'].min())
+    return pd.DataFrame({'Fecha': new_dates, 'consumo_kwh': y_dense})
+    
 
 
 
@@ -155,6 +201,32 @@ with st.sidebar:
     if page == "Dashboard General" and not df_consumo.empty:
         st.markdown("---")
         st.header("Filtros")
+
+        # --- LÓGICA PRINCIPAL ---
+
+if page == "Dashboard General":
+    st.title("Dashboard Energético")
+
+    if not df_consumo.empty:
+        if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
+            # 1. First, apply time filters
+            mask = (df_consumo['Fecha'].dt.date >= date_range[0]) & (df_consumo['Fecha'].dt.date <= date_range[1])
+            mask &= df_consumo['Fecha'].dt.dayofweek.isin(sel_dias)
+            mask &= (df_consumo['Fecha'].dt.hour >= sel_horas[0]) & (df_consumo['Fecha'].dt.hour <= sel_horas[1])
+            
+            df_filtered = df_consumo[mask].copy()
+            
+            # 2. APPLY PCHIP INTERPOLATION (The block you wanted to implement)
+            if use_pchip and not df_filtered.empty:
+                with st.spinner("Suavizando curva de consumo..."):
+                    df_filtered = apply_high_fidelity_filter(df_filtered, stagnation_threshold=stagnation_val)
+
+            # 3. Apply secondary statistical filters
+            if remove_base and not df_filtered.empty:
+                df_filtered = df_filtered[df_filtered['consumo_kwh'] > umbral_base]
+            if remove_peak and not df_filtered.empty:
+                limit = df_filtered['consumo_kwh'].quantile(umbral_pico/100)
+                df_filtered = df_filtered[df_filtered['consumo_kwh'] < limit]
         
         min_date = df_consumo['Fecha'].min().date()
         max_date = df_consumo['Fecha'].max().date()
@@ -167,6 +239,12 @@ with st.sidebar:
         st.markdown("---")
         st.header("Opciones Avanzadas")
         remove_base = st.checkbox("Eliminar Consumo Base")
+
+        st.markdown("---")
+        st.header("Filtrado de Alta Fidelidad")
+        use_pchip = st.checkbox("Activar Filtro Pchip (Anti-Bloques)", help="Elimina tramos planos artificiales y los suaviza manteniendo la forma real.")
+        stagnation_val = st.slider("Sensibilidad de Bloque", 2, 10, 3, help="Cuántos registros seguidos iguales activan el filtro.")
+
         
         # Cálculo seguro del cuantil
         val_base_init = float(df_consumo['consumo_kwh'].quantile(0.1)) if not df_consumo.empty else 0.0
