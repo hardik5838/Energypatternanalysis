@@ -171,7 +171,6 @@ def load_nasa_weather_data(file_input):
 with st.sidebar:
     st.title('⚡ Panel de Control')
     page = st.selectbox("Seleccionar Herramienta", ["Dashboard General", "Simulación NILM (Avanzado)"])
-    st.markdown("---")
     
     source_type = st.radio("Fuente de datos", ["Cargar Archivos", "Desde GitHub"])
     
@@ -201,7 +200,9 @@ with st.sidebar:
     if page == "Dashboard General" and not df_consumo.empty:
         st.markdown("---")
         st.header("Filtros")
-
+        min_date = df_consumo['Fecha'].min().date()
+        max_date = df_consumo['Fecha'].max().date()
+        date_range = st.date_input("Rango de Fechas", [min_date, max_date], min_value=min_date, max_value=max_date)
         # --- LÓGICA PRINCIPAL ---
 
 if page == "Dashboard General":
@@ -228,14 +229,9 @@ if page == "Dashboard General":
                 limit = df_filtered['consumo_kwh'].quantile(umbral_pico/100)
                 df_filtered = df_filtered[df_filtered['consumo_kwh'] < limit]
         
-        min_date = df_consumo['Fecha'].min().date()
-        max_date = df_consumo['Fecha'].max().date()
-        date_range = st.date_input("Rango de Fechas", [min_date, max_date], min_value=min_date, max_value=max_date)
         
-        dias = {0: 'Lunes', 1: 'Martes', 2: 'Miércoles', 3: 'Jueves', 4: 'Viernes', 5: 'Sábado', 6: 'Domingo'}
-        sel_dias = st.multiselect("Días de la semana", list(dias.keys()), format_func=lambda x: dias[x], default=list(dias.keys()))
-        sel_horas = st.slider("Horas del día", 0, 23, (0, 23))
         
+      
         st.markdown("---")
         st.header("Opciones Avanzadas")
         remove_base = st.checkbox("Eliminar Consumo Base")
