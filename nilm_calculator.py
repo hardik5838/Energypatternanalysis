@@ -10,65 +10,53 @@ from scipy.optimize import differential_evolution
 # 1. LOGIC ENGINE (Helper Functions)
 # ==========================================
 
-def simulate_thermal_strategy(df_nilm, config, thermal_capacitance=500):
-    """
-    Calculates Pre-cooling and Free-cooling potential based on NILM parameters.
-    thermal_capacitance: kWh/K (Estimated thermal mass of the building)
-    """
-    df = df_nilm.copy()
-    # Prices (Approximate €/kWh for P1, P2, P3 in Spain)
-    prices = { "P1": 0.25, "P2": 0.15, "P3": 0.10 }
+
+def simulate_physics_strategy(df_sim, config):
+    df = df_sim.copy()
     
-    # Identify Tariff for each hour
+    # Prices (Spain PVPC Approx)
+    prices = {"P1": 0.25, "P2": 0.15, "P3": 0.10}
+    
+    # 1. Calculate Baseline Costs
     def get_price(h):
         if 10 <= h < 14 or 18 <= h < 22: return prices["P1"]
         if 8 <= h < 10 or 14 <= h < 18 or 22 <= h < 24: return prices["P2"]
         return prices["P3"]
     
     df['price_kwh'] = df['hora'].apply(get_price)
-    
-    # 1. FREE COOLING Potential (Out < In)
-    # If outdoor temp < setpoint and we have cooling load, we can use fans only
-    df['free_cooling_delta'] = (config['hvac_setpoint'] - df['temperatura_c']).clip(lower=0)
-    df['free_cooling_kw'] = np.where((df['free_cooling_delta'] > 2) & (df['sim_therm'] > 0), 
-                                     df['sim_therm'] * 0.8, 0) # 80% reduction if using fans
-
-    # 2. PRE-COOLING Strategy (Shift P1 to P3)
-    # We target shifting the morning P1 peak (10:00 - 14:00) to the early morning P3 (00:00 - 08:00)
-    p1_mask = (df['hora'] >= 10) & (df['hora'] < 14)
-    p3_precool_mask = (df['hora'] >= 4) & (df['hora'] < 8)
-    
-    energy_to_shift = df.loc[p1_mask, 'sim_therm'].sum()
-    
-    df['sim_optimized'] = df['sim_total'] - df['free_cooling_kw']
-    
-    # Apply the shift
-    if energy_to_shift > 0:
-        # Remove from P1
-        df.loc[p1_mask, 'sim_optimized'] -= df.loc[p1_mask, 'sim_therm']
-        # Add to P3 (with a 10% efficiency penalty for thermal storage leakage)
-        df.loc[p3_precool_mask, 'sim_optimized'] += (energy_to_shift / 4) * 1.1 
-
     df['cost_baseline'] = df['sim_total'] * df['price_kwh']
+    
+    # 2. Physics Constants for the 'Free Fall'
+    rise_rate = 1.6  # Degrees per hour
+    hours_of_p1 = 4
+    target_launch_temp = 27.0 - (hours_of_p1 * rise_rate)
+    
+    # 3. Apply the Shift Logic
+    df['sim_optimized'] = df['sim_total']
+    
+    # MASK 1: The P1 Shutdown (10:00 - 14:00)
+    p1_mask = (df['hora'] >= 10) & (df['hora'] < 14)
+    energy_removed_from_p1 = df.loc[p1_mask, 'sim_therm'].sum()
+    df.loc[p1_mask, 'sim_optimized'] -= df.loc[p1_mask, 'sim_therm']
+    
+    # MASK 2: The P3 Precool (04:00 - 09:00)
+    p3_mask = (df['hora'] >= 4) & (df['hora'] < 9)
+    # Estimate thermal mass (Capacitance) from UA
+    mass_kwh_per_k = config['hvac_ua'] / 10 
+    
+    # Degrees we need to drop the building to reach the 'Launch Temp'
+    # Defaulting to 22C start if temp data is messy
+    current_avg_temp = df.loc[p3_mask, 'temperatura_c'].mean() if not df.empty else 22.0
+    degrees_to_drop = max(0, current_avg_temp - target_launch_temp)
+    energy_to_add_p3 = degrees_to_drop * mass_kwh_per_k
+    
+    # Distribute the precooling energy over the 5-hour P3 window
+    df.loc[p3_mask, 'sim_optimized'] += (energy_to_add_p3 / 5)
+    
+    # 4. Calculate Optimized Costs
     df['cost_optimized'] = df['sim_optimized'] * df['price_kwh']
     
     return df
-
-def estimate_medical_office_metrics(total_annual_kwh):
-    # Benchmark for Mixed Medical/Office (kWh/m2/year)
-    # Medical facilities are energy-dense; using 250 kWh/m2 as a hybrid baseline
-    eui_benchmark = 200 
-    estimated_area = total_annual_kwh / eui_benchmark
-    ua_value = estimated_area * 1
-    
-    guesses = {
-        "area": estimated_area,
-        "light_kw": (estimated_area * 15) / 1000,   # 15 W/m2
-        "hvac_therm_kw": (estimated_area * 120) / 1000, # 120 W/m2 Thermal
-        "vent_kw": (estimated_area * 7) / 1000,     # 5 W/m2
-        "ua": ua_value
-    }
-    return guesses
 
 def generate_load_curve(hours, start, end, max_kw, ramp_up, ramp_down, nominal_pct=1.0, residual_pct=0.0, dips=None):
     """
@@ -423,41 +411,36 @@ def show_nilm_page(df_consumo, df_clima):
 
     # --- OPTIMIZATION TAB ---
     st.divider()
-    st.header("4. Savings Optimizer (Free & Pre-cooling)")
+    st.header("4. Savings Optimizer (Physics-Based Free Fall)")
     
-    # Live link: This takes the current NILM simulation and applies strategy
-    df_opt = simulate_thermal_strategy(df_sim, config)
+    # 1. Run the physics simulation
+    # Ensure we use df_sim which contains our NILM breakdown
+    df_opt = simulate_physics_strategy(df_sim, config)
     
-    col_opt1, col_opt2, col_opt3 = st.columns(3)
-    
+    # 2. Calculate Metrics
     total_cost_base = df_opt['cost_baseline'].sum()
     total_cost_opt = df_opt['cost_optimized'].sum()
-    savings_euro = total_cost_base - total_cost_opt
+    savings_daily = total_cost_base - total_cost_opt
     
-    col_opt1.metric("Daily Energy Cost (Baseline)", f"{total_cost_base:.2f} €")
-    col_opt2.metric("Daily Energy Cost (Optimized)", f"{total_cost_opt:.2f} €", 
-                    delta=f"-{savings_euro:.2f} €", delta_color="normal")
-    col_opt3.metric("Est. Monthly Savings", f"{savings_euro * 22:.2f} €") # 22 working days
+    # 3. Display Metrics
+    col_opt1, col_opt2, col_opt3 = st.columns(3)
+    col_opt1.metric("Daily Cost (Standard)", f"{total_cost_base:.2f} €")
+    col_opt2.metric("Daily Cost (Optimized)", f"{total_cost_opt:.2f} €", 
+                    delta=f"-{savings_daily:.2f} €", delta_color="normal")
+    
+    # Calculate monthly based on 22 workdays (as in your original logic)
+    col_opt3.metric("Est. Monthly Savings", f"{savings_daily * 22:.2f} €")
 
-    # Plotting the Shift
+    # 4. The Chart
     fig_opt = go.Figure()
     fig_opt.add_trace(go.Scatter(x=df_opt['hora'], y=df_opt['sim_total'], 
-                                 name="Baseline (NILM)", line=dict(dash='dash', color='grey')))
+                                 name="Baseline Load", line=dict(dash='dash', color='grey')))
     fig_opt.add_trace(go.Scatter(x=df_opt['hora'], y=df_opt['sim_optimized'], 
                                  name="Optimized (Shifted)", fill='tozeroy', line=dict(color='#2ecc71')))
     
-    fig_opt.update_layout(title="Load Shifting: Moving P1 Peak to P3 Night Valley", 
+    fig_opt.update_layout(title="Load Shifting: 4-Hour P1 Shutdown via Pre-cooling", 
                           xaxis_title="Hour", yaxis_title="kW")
     st.plotly_chart(fig_opt, use_container_width=True)
-
-    with st.expander("Strategy Details"):
-        st.write("""
-        **1. Pre-cooling:** The algorithm identifies the HVAC load during the 10:00-14:00 (P1) window and 
-        moves it to 04:00-08:00 (P3). This uses the building's concrete mass as a thermal battery.
-        
-        **2. Free Cooling:** When outside temperature is lower than the setpoint, the model assumes 
-        economizer mode (using outside air), reducing compressor energy by 80%.
-        """)
 
     # --- METRICS & PLOTS ---
     st.markdown("###Key Performance Indicators")
