@@ -217,6 +217,12 @@ with st.sidebar:
 
         # 2. ADD THIS: Slider for hours
         sel_horas = st.slider("Rango de Horas", 0, 23, (0, 23))
+
+        st.markdown("---")
+        st.header("Opciones de Filtrado")
+        use_pchip = st.checkbox("Activar Filtro Pchip (Anti-Bloques)")
+        stagnation_val = st.slider("Sensibilidad", 2, 10, 3)
+
         # --- LÓGICA PRINCIPAL ---
 
 if page == "Dashboard General":
