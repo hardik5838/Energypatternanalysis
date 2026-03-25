@@ -9,7 +9,34 @@ from scipy.optimize import differential_evolution
 # ==========================================
 # 1. LOGIC ENGINE (Helper Functions)
 # ==========================================
-
+def estimate_medical_office_metrics(total_annual_kwh):
+    """
+    Estimates building parameters based on typical medical office benchmarks.
+    Assumes ~200 kWh/m2/year for a standard clinic.
+    """
+    # 1. Estimate Area (m2) based on typical intensity
+    estimated_area = total_annual_kwh / 200.0
+    
+    # 2. Estimate UA (Heat loss coefficient) 
+    # Approx 1.2 W/m2K for standard insulation
+    ua = estimated_area * 1.2 
+    
+    # 3. Estimate Lighting (Approx 8-12 W/m2)
+    light_kw = (estimated_area * 10) / 1000.0
+    
+    # 4. Estimate Ventilation (Approx 15 W/m2)
+    vent_kw = (estimated_area * 15) / 1000.0
+    
+    # 5. Estimate HVAC Thermal Peak (Approx 100 W/m2 thermal)
+    hvac_therm_kw = (estimated_area * 100) / 1000.0
+    
+    return {
+        'area': estimated_area,
+        'ua': ua,
+        'light_kw': light_kw,
+        'vent_kw': vent_kw,
+        'hvac_therm_kw': hvac_therm_kw
+    }
 
 def simulate_physics_strategy(df_sim, config):
     df = df_sim.copy()
