@@ -203,6 +203,20 @@ with st.sidebar:
         min_date = df_consumo['Fecha'].min().date()
         max_date = df_consumo['Fecha'].max().date()
         date_range = st.date_input("Rango de Fechas", [min_date, max_date], min_value=min_date, max_value=max_date)
+
+# Mapping for days of the week
+        dias = {0: 'Lunes', 1: 'Martes', 2: 'Miércoles', 3: 'Jueves', 4: 'Viernes', 5: 'Sábado', 6: 'Domingo'}
+        
+        # 1. ADD THIS: Multiselect for days
+        sel_dias = st.multiselect(
+            "Seleccionar Días", 
+            options=list(dias.keys()), 
+            default=list(dias.keys()), 
+            format_func=lambda x: dias[x]
+        )
+
+        # 2. ADD THIS: Slider for hours
+        sel_horas = st.slider("Rango de Horas", 0, 23, (0, 23))
         # --- LÓGICA PRINCIPAL ---
 
 if page == "Dashboard General":
