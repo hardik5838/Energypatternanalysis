@@ -421,6 +421,44 @@ def show_nilm_page(df_consumo, df_clima):
     
     df_sim = run_simulation(df_avg, config)
 
+    # --- OPTIMIZATION TAB ---
+    st.divider()
+    st.header("4. Savings Optimizer (Free & Pre-cooling)")
+    
+    # Live link: This takes the current NILM simulation and applies strategy
+    df_opt = simulate_thermal_strategy(df_sim, config)
+    
+    col_opt1, col_opt2, col_opt3 = st.columns(3)
+    
+    total_cost_base = df_opt['cost_baseline'].sum()
+    total_cost_opt = df_opt['cost_optimized'].sum()
+    savings_euro = total_cost_base - total_cost_opt
+    
+    col_opt1.metric("Daily Energy Cost (Baseline)", f"{total_cost_base:.2f} €")
+    col_opt2.metric("Daily Energy Cost (Optimized)", f"{total_cost_opt:.2f} €", 
+                    delta=f"-{savings_euro:.2f} €", delta_color="normal")
+    col_opt3.metric("Est. Monthly Savings", f"{savings_euro * 22:.2f} €") # 22 working days
+
+    # Plotting the Shift
+    fig_opt = go.Figure()
+    fig_opt.add_trace(go.Scatter(x=df_opt['hora'], y=df_opt['sim_total'], 
+                                 name="Baseline (NILM)", line=dict(dash='dash', color='grey')))
+    fig_opt.add_trace(go.Scatter(x=df_opt['hora'], y=df_opt['sim_optimized'], 
+                                 name="Optimized (Shifted)", fill='tozeroy', line=dict(color='#2ecc71')))
+    
+    fig_opt.update_layout(title="Load Shifting: Moving P1 Peak to P3 Night Valley", 
+                          xaxis_title="Hour", yaxis_title="kW")
+    st.plotly_chart(fig_opt, use_container_width=True)
+
+    with st.expander("Strategy Details"):
+        st.write("""
+        **1. Pre-cooling:** The algorithm identifies the HVAC load during the 10:00-14:00 (P1) window and 
+        moves it to 04:00-08:00 (P3). This uses the building's concrete mass as a thermal battery.
+        
+        **2. Free Cooling:** When outside temperature is lower than the setpoint, the model assumes 
+        economizer mode (using outside air), reducing compressor energy by 80%.
+        """)
+
     # --- METRICS & PLOTS ---
     st.markdown("###Key Performance Indicators")
     total_real = df_sim['consumo_kwh'].sum()
