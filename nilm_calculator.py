@@ -473,9 +473,9 @@ layers = [
     for col, name, color in layers:
         fig1.add_trace(go.Scatter(x=df_sim['hora'], y=df_sim[col], stackgroup='one', name=name, mode='none', fillcolor=color))
 
-    fig1.add_trace(go.Scatter(x=df_sim['hora'], y=df_sim['consumo_kwh'], name='REAL METER', line=dict(color='black', width=4)))
+        fig1.add_trace(go.Scatter(x=df_sim['hora'], y=df_sim['consumo_kwh'], name='REAL METER', line=dict(color='black', width=4)))
 
-    fig1.update_layout(height=600, margin=dict(l=20, r=20, t=20, b=20), xaxis=dict(title="Hour of Day", dtick=1), yaxis=dict(title="Power (kW)"), legend=dict(orientation="h", y=1.02, x=0.5, xanchor="center"))
+        fig1.update_layout(height=600, margin=dict(l=20, r=20, t=20, b=20), xaxis=dict(title="Hour of Day", dtick=1), yaxis=dict(title="Power (kW)"), legend=dict(orientation="h", y=1.02, x=0.5, xanchor="center"))
     st.plotly_chart(fig1, use_container_width=True)
 
     c1, c2 = st.columns(2)
