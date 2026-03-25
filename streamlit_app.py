@@ -222,7 +222,12 @@ with st.sidebar:
         st.header("Opciones de Filtrado")
         use_pchip = st.checkbox("Activar Filtro Pchip (Anti-Bloques)")
         stagnation_val = st.slider("Sensibilidad", 2, 10, 3)
-
+        
+        remove_base = st.checkbox("Eliminar Consumo Base")
+        umbral_base = st.number_input("Umbral Base (kWh)", value=float(df_consumo['consumo_kwh'].quantile(0.1)))
+        
+        remove_peak = st.checkbox("Eliminar Picos")
+        umbral_pico = st.number_input("Percentil Picos", 90.0, 100.0, 99.0)
         # --- LÓGICA PRINCIPAL ---
 
 if page == "Dashboard General":
