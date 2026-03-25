@@ -10,6 +10,50 @@ from scipy.optimize import differential_evolution
 # 1. LOGIC ENGINE (Helper Functions)
 # ==========================================
 
+def simulate_thermal_strategy(df_nilm, config, thermal_capacitance=500):
+    """
+    Calculates Pre-cooling and Free-cooling potential based on NILM parameters.
+    thermal_capacitance: kWh/K (Estimated thermal mass of the building)
+    """
+    df = df_nilm.copy()
+    # Prices (Approximate €/kWh for P1, P2, P3 in Spain)
+    prices = { "P1": 0.25, "P2": 0.15, "P3": 0.10 }
+    
+    # Identify Tariff for each hour
+    def get_price(h):
+        if 10 <= h < 14 or 18 <= h < 22: return prices["P1"]
+        if 8 <= h < 10 or 14 <= h < 18 or 22 <= h < 24: return prices["P2"]
+        return prices["P3"]
+    
+    df['price_kwh'] = df['hora'].apply(get_price)
+    
+    # 1. FREE COOLING Potential (Out < In)
+    # If outdoor temp < setpoint and we have cooling load, we can use fans only
+    df['free_cooling_delta'] = (config['hvac_setpoint'] - df['temperatura_c']).clip(lower=0)
+    df['free_cooling_kw'] = np.where((df['free_cooling_delta'] > 2) & (df['sim_therm'] > 0), 
+                                     df['sim_therm'] * 0.8, 0) # 80% reduction if using fans
+
+    # 2. PRE-COOLING Strategy (Shift P1 to P3)
+    # We target shifting the morning P1 peak (10:00 - 14:00) to the early morning P3 (00:00 - 08:00)
+    p1_mask = (df['hora'] >= 10) & (df['hora'] < 14)
+    p3_precool_mask = (df['hora'] >= 4) & (df['hora'] < 8)
+    
+    energy_to_shift = df.loc[p1_mask, 'sim_therm'].sum()
+    
+    df['sim_optimized'] = df['sim_total'] - df['free_cooling_kw']
+    
+    # Apply the shift
+    if energy_to_shift > 0:
+        # Remove from P1
+        df.loc[p1_mask, 'sim_optimized'] -= df.loc[p1_mask, 'sim_therm']
+        # Add to P3 (with a 10% efficiency penalty for thermal storage leakage)
+        df.loc[p3_precool_mask, 'sim_optimized'] += (energy_to_shift / 4) * 1.1 
+
+    df['cost_baseline'] = df['sim_total'] * df['price_kwh']
+    df['cost_optimized'] = df['sim_optimized'] * df['price_kwh']
+    
+    return df
+
 def estimate_medical_office_metrics(total_annual_kwh):
     # Benchmark for Mixed Medical/Office (kWh/m2/year)
     # Medical facilities are energy-dense; using 250 kWh/m2 as a hybrid baseline
