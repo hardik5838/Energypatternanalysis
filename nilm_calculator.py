@@ -186,15 +186,15 @@ def run_optimizer(df_avg, m):
     # We define search bounds around the medical benchmarks (+/- 30%)
     # This guides the AI to stay within a physical reality for medical buildings
     bounds = [
-        (0, max_load * 0.4),                  # 0: Base Load kW
-        (m['vent_kw']*0.7, m['vent_kw']*1.3),   # 1: Vent kW
+        (0, max_load * 0.25),                  # 0: Base Load kW
+        (m['vent_kw']*0.5, m['vent_kw']*1.5),   # 1: Vent kW
         (5, 9),                               # 2: Vent Start
         (m['light_kw']*0.7, m['light_kw']*1.3), # 3: Light kW
         (17, 22),                             # 4: Light End
         (m['hvac_therm_kw']/4, m['hvac_therm_kw']/2), # 5: HVAC Elec Max
         (4, 10),                              # 6: HVAC Start
         (16, 23),                             # 7: HVAC End
-        (m['ua']*0.8, m['ua']*1.2)            # 8: UA Heat Loss
+        (m['ua']*0.8, m['ua']*2)            # 8: UA Heat Loss
     ]
     
     def obj(p, d):
@@ -461,13 +461,13 @@ def show_nilm_page(df_consumo, df_clima):
     for start, end, color, name in tariff_periods:
         fig1.add_vrect(x0=start, x1=end, fillcolor=color, opacity=1, layer="below", line_width=0)
 
-    layers = [
-        ('sim_base', 'Base Load', '#7f8c8d'),
-        ('sim_vent', 'Ventilation', '#3498db'),
-        ('sim_light', 'Lighting', '#f1c40f'),
-        ('sim_therm', 'HVAC (Total)', '#e74c3c'),
-        ('sim_occ', 'Occupancy', '#e67e22')
-    ]
+layers = [
+    ('sim_base', 'Base Load', '#7f8c8d'),     # Bottom
+    ('sim_vent', 'Ventilation', '#3498db'),   # Middle-bottom
+    ('sim_light', 'Lighting', '#f1c40f'),    # Middle
+    ('sim_therm', 'HVAC (Total)', '#e74c3c'), # Middle-top
+    ('sim_occ', 'Occupancy', '#e67e22')       # Top
+]
 
 
     for col, name, color in layers:
