@@ -388,8 +388,8 @@ def show_nilm_page(df_consumo, df_clima):
         
         with st.expander("Gains & Ramps"):
             h_q_int = st.number_input("Internal Gains [kW]", 0.0, 50.0, 2.0, key='hvac_qi')
-            h_q_sol = st.number_input("Solar Gains [kW]", 0.0, 50.0,20, key='hvac_qs')
-            h_q_vent = st.number_input("Ventilation Load [kW]", 0.0, 150.0, 50, key='hvac_qv')
+            h_q_sol = st.number_input("Solar Gains [kW]", 0.0, 50.0,20.0, key='hvac_qs')
+            h_q_vent = st.number_input("Ventilation Load [kW]", 0.0, 150.0, 50.0, key='hvac_qv')
             h_ru = st.number_input("HVAC Ramp Up", 0.0, 5.0, 1.0, key="hvac_ru")
             h_rd = st.number_input("HVAC Ramp Down", 0.0, 5.0, 1.0, key="hvac_rd")
         
