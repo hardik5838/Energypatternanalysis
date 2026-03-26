@@ -7,7 +7,7 @@ import os
 import io
 from urllib.parse import quote
 import nilm_calculator 
-import Predicción _NILM_Futura
+import Predicción_NILM_Futura
 from scipy.interpolate import PchipInterpolator
 
 
