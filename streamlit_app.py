@@ -327,23 +327,23 @@ elif page == "Simulación NILM (Avanzado)":
     
 elif page == "Predicción NILM Futura":
     st.sidebar.markdown("---")
-        st.sidebar.header("Configuración del Pronóstico (API)")
+    st.sidebar.header("Configuración del Pronóstico (API)")
         
         # Inputs para la API en el sidebar (basado en tu configuración actual)
-        api_key = st.sidebar.text_input("18C$Kz2BnLMc", type="password")
-        lat = st.sidebar.text_input("Latitud", "40.4168")
-        lon = st.sidebar.text_input("Longitud", "-3.7038")
+    api_key = st.sidebar.text_input("18C$Kz2BnLMc", type="password")
+    lat = st.sidebar.text_input("Latitud", "40.4168")
+    lon = st.sidebar.text_input("Longitud", "-3.7038")
     
         # Requerir la API Key para proceder
-        if api_key:
-            with st.spinner("Obteniendo pronóstico del clima de la API..."):
+    if api_key:
+        with st.spinner("Obteniendo pronóstico del clima de la API..."):
                 # Usar la función existente para obtener el clima futuro
-                df_clima_futuro = get_weather_forecast(api_key, lat, lon)
+            df_clima_futuro = get_weather_forecast(api_key, lat, lon)
     
-            if not df_clima_futuro.empty:
+        if not df_clima_futuro.empty:
                 # Llamar a la función de la página que creamos (ajusta el nombre si la importaste)
-                show_forecast_nilm_page(df_consumo, df_clima, df_clima_futuro)
-            else:
-                st.error("No se pudieron cargar los datos futuros del clima.")
+            show_forecast_nilm_page(df_consumo, df_clima, df_clima_futuro)
         else:
-            st.info("ℹ️ **Para comenzar**, por favor introduce tu API Key de Meteosource en la barra lateral para descargar el pronóstico y predecir el consumo futuro.")
+            st.error("No se pudieron cargar los datos futuros del clima.")
+    else:
+        st.info("ℹ️ **Para comenzar**, por favor introduce tu API Key de Meteosource en la barra lateral para descargar el pronóstico y predecir el consumo futuro.")
