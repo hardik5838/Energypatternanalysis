@@ -9,7 +9,31 @@ from urllib.parse import quote
 import nilm_calculator 
 import Prediccion_NILM_Futura
 from scipy.interpolate import PchipInterpolator
+import requests
 
+def get_weather_forecast(api_key, lat, lon):
+    """
+    Fetches 5-day weather forecast from OpenWeatherMap API.
+    """
+    url = f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={api_key}&units=metric"
+    response = requests.get(url)
+    if response.status_code == 200:
+        data = response.json()
+        # Extracting relevant forecast data (this is a simplified example)
+        forecast_list = []
+        for entry in data['list']:
+            forecast_list.append({
+                'fecha': pd.to_datetime(entry['dt_txt']),
+                'temp_avg_c': entry['main']['temp']
+            })
+        df_forecast = pd.DataFrame(forecast_list)
+        # Group by day to match your daily energy data
+        df_daily = df_forecast.groupby(df_forecast['fecha'].dt.date).mean().reset_index()
+        df_daily['fecha'] = pd.to_datetime(df_daily['fecha'])
+        return df_daily
+    else:
+        st.error(f"Error fetching weather: {response.status_code}")
+        return pd.DataFrame()
 
 
 def apply_high_fidelity_filter(df, stagnation_threshold=3):
