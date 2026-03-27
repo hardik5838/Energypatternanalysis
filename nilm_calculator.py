@@ -42,7 +42,7 @@ def simulate_physics_strategy(df_sim, config):
     df = df_sim.copy()
     
     # Prices (Spain PVPC Approx)
-    prices = {"P1": 0.25, "P2": 0.15, "P3": 0.10}
+    prices = {"P1": 0.30, "P2": 0.18, "P3": 0.10}
     
     # 1. Calculate Baseline Costs
     def get_price(h):
@@ -53,10 +53,9 @@ def simulate_physics_strategy(df_sim, config):
     df['price_kwh'] = df['hora'].apply(get_price)
     df['cost_baseline'] = df['sim_total'] * df['price_kwh']
     
-    # 2. Physics Constants for the 'Free Fall'
-    rise_rate = 1.6  # Degrees per hour
-    hours_of_p1 = 4
-    target_launch_temp = 27.0 - (hours_of_p1 * rise_rate)
+    rise_rate = 1.6  # should be dynamic , NEEDS TO BE IMPROVED
+    hours_of_p1 = 4 
+    target_launch_temp = 27.0 - (hours_of_p1 * rise_rate) # a constraint of no less tahn 20 is needed 
     
     # 3. Apply the Shift Logic
     df['sim_optimized'] = df['sim_total']
@@ -69,7 +68,7 @@ def simulate_physics_strategy(df_sim, config):
     # MASK 2: The P3 Precool (04:00 - 09:00)
     p3_mask = (df['hora'] >= 4) & (df['hora'] < 9)
     # Estimate thermal mass (Capacitance) from UA
-    mass_kwh_per_k = config['hvac_ua'] / 10 
+    mass_kwh_per_k = config['hvac_ua'] / 7
     
     # Degrees we need to drop the building to reach the 'Launch Temp'
     # Defaulting to 22C start if temp data is messy
@@ -215,12 +214,12 @@ def run_optimizer(df_avg, m):
     bounds = [
         (0, max_load * 0.25),                  # 0: Base Load kW
         (m['vent_kw']*0.5, m['vent_kw']*1),   # 1: Vent kW
-        (5, 9),                               # 2: Vent Start
+        (8,11),                               # 2: Vent Start
         (m['light_kw']*0.7, m['light_kw']*1.3), # 3: Light kW
-        (17, 22),                             # 4: Light End
+        (17, 24),                             # 4: Light End
         (m['hvac_therm_kw']/4, m['hvac_therm_kw']/2), # 5: HVAC Elec Max
         (4, 10),                              # 6: HVAC Start
-        (16, 23),                             # 7: HVAC End
+        (16, 24),                             # 7: HVAC End
         (m['ua']*0.8, m['ua']*2)            # 8: UA Heat Loss
     ]
     
@@ -247,8 +246,8 @@ def render_standard_controls(prefix, label, default_kw, default_sched):
     if k_sched not in st.session_state: st.session_state[k_sched] = default_sched
     kw = st.number_input(f"{label} Max [kW]", 0.0, 500000.0, key=k_kw)
     s, e = st.slider(f"{label} Schedule", 0, 24, key=k_sched)
-    ru = st.number_input(f"Ramp Up (h)", 0.0, 10.0, 0.5, key=f"{prefix}_ru")
-    rd = st.number_input(f"Ramp Down (h)", 0.0, 10.0, 0.5, key=f"{prefix}_rd")
+    ru = st.number_input(f"Ramp Up (h)", 0.0, 10.0, 0.0, key=f"{prefix}_ru")
+    rd = st.number_input(f"Ramp Down (h)", 0.0, 10.0, 0.0, key=f"{prefix}_rd")
     nom = st.slider(f"{label} Nominal %", 0, 100, 100, key=f"{prefix}_nom") / 100.0
     res_val = (st.number_input(f"Residual %", 0.0, 100.0, 5.0, key=f"{prefix}_res_val") / 100.0) if st.checkbox(f"Residual?", key=f"{prefix}_res_on") else 0.0
     return kw, s, e, ru, rd, nom, res_val
@@ -495,11 +494,11 @@ def show_nilm_page(df_consumo, df_clima):
         fig1.add_vrect(x0=start, x1=end, fillcolor=color, opacity=1, layer="below", line_width=0)
 
     layers = [
-        ('sim_base', 'Base Load', '#7f8c8d'),     # Bottom
-        ('sim_vent', 'Ventilation', '#3498db'),   # Middle-bottom
-        ('sim_light', 'Lighting', '#f1c40f'),    # Middle
-        ('sim_therm', 'HVAC (Total)', '#e74c3c'), # Middle-top
-        ('sim_occ', 'Occupancy', '#e67e22')       # Top
+        ('sim_base',    'Base Load',       '#455a64'), # 
+        ('sim_vent',    'Ventilation',     '#3949ab'), # 
+        ('sim_light',   'Lighting',        '#c0ca33'), # 
+        ('sim_therm',   'HVAC (Total)',    '#bf360c'), # 
+        ('sim_occ',     'Occupancy',       '#26a69a')  # 
     ]
     
     # 1. Loop through layers to create the stacked area chart
