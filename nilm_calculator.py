@@ -15,7 +15,7 @@ def estimate_medical_office_metrics(total_annual_kwh):
     Assumes ~200 kWh/m2/year for a standard clinic.
     """
     # 1. Estimate Area (m2) based on typical intensity
-    estimated_area = total_annual_kwh / 100.0
+    estimated_area = total_annual_kwh / 120.0
     
     # 2. Estimate UA (Heat loss coefficient) 
     # Approx 1.2 W/m2K for standard insulation
@@ -25,7 +25,7 @@ def estimate_medical_office_metrics(total_annual_kwh):
     light_kw = (estimated_area * 10) / 1000.0
     
     # 4. Estimate Ventilation (Approx 15 W/m2)
-    vent_kw = (estimated_area * 15) / 1000.0
+    vent_kw = (estimated_area * 3) / 1000.0
     
     # 5. Estimate HVAC Thermal Peak (Approx 100 W/m2 thermal)
     hvac_therm_kw = (estimated_area * 100) / 1000.0
