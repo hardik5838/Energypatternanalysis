@@ -9,18 +9,7 @@ from scipy.optimize import differential_evolution
 # ==========================================
 # 1. LOGIC ENGINE (Helper Functions)
 # ==========================================
-def get_physics_ramp(h, start, end, ramp_up, ramp_down):
-    # Calculate time distance from transitions
-    if ramp_up > 0 and h >= start:
-        # Logistic growth for start-up
-        return 1 / (1 + np.exp(-10 * (h - (start + ramp_up/2)) / ramp_up))
-    
-    if ramp_down > 0 and h >= end:
-        # Exponential decay for shut-down (Newton's cooling law)
-        # k = 3 / ramp_down ensures 95% drop within the ramp window
-        return np.exp(-(3 / ramp_down) * (h - end))
-    
-    return 1.0 if start <= h < end else 0.0
+
 
 def estimate_medical_office_metrics(total_annual_kwh):
     """
