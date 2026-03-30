@@ -9,6 +9,19 @@ from scipy.optimize import differential_evolution
 # ==========================================
 # 1. LOGIC ENGINE (Helper Functions)
 # ==========================================
+def get_physics_ramp(h, start, end, ramp_up, ramp_down):
+    # Calculate time distance from transitions
+    if ramp_up > 0 and h >= start:
+        # Logistic growth for start-up
+        return 1 / (1 + np.exp(-10 * (h - (start + ramp_up/2)) / ramp_up))
+    
+    if ramp_down > 0 and h >= end:
+        # Exponential decay for shut-down (Newton's cooling law)
+        # k = 3 / ramp_down ensures 95% drop within the ramp window
+        return np.exp(-(3 / ramp_down) * (h - end))
+    
+    return 1.0 if start <= h < end else 0.0
+
 def estimate_medical_office_metrics(total_annual_kwh):
     """
     Estimates building parameters based on typical medical office benchmarks.
@@ -106,17 +119,16 @@ def generate_load_curve(hours, start, end, max_kw, ramp_up, ramp_down, nominal_p
             
             # Ramp Up
             # Note: Ramps are simplified for cyclic days to avoid complexity at midnight crossover in this version
-            if ramp_up > 0:
-                time_since_start = (h - start) if h >= start else (h + 24 - start)
-                if time_since_start < ramp_up:
-                    activity_val = time_since_start / ramp_up
-            
-            # Ramp Down
-            if ramp_down > 0:
-                time_until_end = (end - h) if end > h else (end + 24 - h)
-                if time_until_end < ramp_down:
-                    activity_val = time_until_end / ramp_down
+        if ramp_up > 0 and h >= start:
+            # Logistic growth for start-up
+            return 1 / (1 + np.exp(-10 * (h - (start + ramp_up/2)) / ramp_up))
+        
+        if ramp_down > 0 and h >= end:
+            # Exponential decay for shut-down (Newton's cooling law)
+            # k = 3 / ramp_down ensures 95% drop within the ramp window
+            return np.exp(-(3 / ramp_down) * (h - end))
 
+        return 1.0 if start <= h < end else 0.0    
             # Apply Dips
             for dip in dips:
                 if int(h) == int(dip['hour']):
