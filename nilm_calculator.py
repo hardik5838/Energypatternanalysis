@@ -380,15 +380,15 @@ def show_nilm_page(df_consumo, df_clima):
         st.header("2. Infrastructure Controls")
         
         # IMPORTANT: Assigning function results to variables (b_kw, v_kw, etc.)
-        b_kw, b_s, b_e, b_ru, b_rd, b_nom, b_res = render_standard_controls("base", "Base Load", 20.0, (0, 24))
+        b_kw, b_s, b_e, b_ru, b_rd, b_nom, b_res = render_standard_controls("base", "Base Load", 20.0, (0,24))
         st.divider()
         v_kw, v_s, v_e, v_ru, v_rd, v_nom, v_res = render_standard_controls("vent", "Ventilation", 30.0, (10, 19))
         st.divider()
-        l_kw, l_s, l_e, l_ru, l_rd, l_nom, l_res = render_standard_controls("light", "Lighting", 15.0, (6, 24))
+        l_kw, l_s, l_e, l_ru, l_rd, l_nom, l_res = render_standard_controls("light", "Lighting", 15.0, (7,20))
         
         st.divider()
         st.subheader("HVAC Parameters")
-        h_win = st.slider("Operation Window", 0, 24, value=(7, 24), key='hvac_win')
+        h_win = st.slider("Operation Window", 0, 24, value=(7, 20), key='hvac_win')
         h_s, h_e = h_win[0], h_win[1] 
         
         col1, col2 = st.columns(2)
