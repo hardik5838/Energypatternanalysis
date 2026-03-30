@@ -256,7 +256,6 @@ with st.sidebar:
         # --- LÓGICA PRINCIPAL ---
 
 if page == "Dashboard General":
-    st.title("Dashboard Energético")
 
     if not df_consumo.empty:
         if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
