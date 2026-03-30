@@ -514,6 +514,39 @@ def show_nilm_page(df_consumo, df_clima):
     with st.expander("Show Detailed Data Table"):
         st.dataframe(df_sim.style.format(precision=2), use_container_width=True)
 
+
+    # --- OPTIMIZATION TAB ---
+    st.divider()
+    st.header("Savings Optimizer (Physics-Based Free Fall)")
+    
+    # 1. Run the physics simulation
+    # Ensure we use df_sim which contains our NILM breakdown
+    df_opt = simulate_physics_strategy(df_sim, config)
+    
+    # 2. Calculate Metrics
+    total_cost_base = df_opt['cost_baseline'].sum()
+    total_cost_opt = df_opt['cost_optimized'].sum()
+    savings_daily = total_cost_base - total_cost_opt
+    
+    # 3. Display Metrics
+    col_opt1, col_opt2, col_opt3 = st.columns(3)
+    col_opt1.metric("Daily Cost (Standard)", f"{total_cost_base:.2f} €")
+    col_opt2.metric("Daily Cost (Optimized)", f"{total_cost_opt:.2f} €", 
+                    delta=f"-{savings_daily:.2f} €", delta_color="normal")
+    
+    # Calculate monthly based on 22 workdays (as in your original logic)
+    col_opt3.metric("Est. Monthly Savings", f"{savings_daily * 22:.2f} €")
+
+    # 4. The Chart
+    fig_opt = go.Figure()
+    fig_opt.add_trace(go.Scatter(x=df_opt['hora'], y=df_opt['sim_total'], 
+                                 name="Baseline Load", line=dict(dash='dash', color='grey')))
+    fig_opt.add_trace(go.Scatter(x=df_opt['hora'], y=df_opt['sim_optimized'], 
+                                 name="Optimized (Shifted)", fill='tozeroy', line=dict(color='#2ecc71')))
+    
+
+
+
 if __name__ == "__main__":
     st.set_page_config(page_title="NILM Digital Twin", layout="wide")
     dates = pd.date_range(start="2023-01-01", end="2023-12-31", freq="h")
