@@ -494,11 +494,11 @@ def show_nilm_page(df_consumo, df_clima):
         fig1.add_vrect(x0=start, x1=end, fillcolor=color, opacity=1, layer="below", line_width=0)
 
     layers = [
-        ('sim_base',    'Base Load',       '#455a64'), # 
-        ('sim_vent',    'Ventilation',     '#3949ab'), # 
-        ('sim_light',   'Lighting',        '#c0ca33'), # 
-        ('sim_therm',   'HVAC (Total)',    '#bf360c'), # 
-        ('sim_occ',     'Occupancy',       '#26a69a')  # 
+        ('sim_base',  'Base Load',    '#37474f'), # Slate
+        ('sim_vent',  'Ventilation',  '#0288d1'), # Sky
+        ('sim_light', 'Lighting',     '#fbc02d'), # Gold
+        ('sim_therm', 'HVAC (Total)', '#e53935'), # Crimson
+        ('sim_occ',   'Occupancy',    '#fb8c00')  # Amber
     ]
     
     # 1. Loop through layers to create the stacked area chart
