@@ -130,10 +130,10 @@ def generate_load_curve(hours, start, end, max_kw, ramp_up, ramp_down, nominal_p
 
         return 1.0 if start <= h < end else 0.0    
             # Apply Dips
-            for dip in dips:
-                if int(h) == int(dip['hour']):
-                    factor = 1.0 - (dip['percent'] / 100.0)
-                    activity_val *= factor
+        for dip in dips:
+            if int(h) == int(dip['hour']):
+                factor = 1.0 - (dip['percent'] / 100.0)
+                activity_val *= factor
         
         # Clip activity
         activity_val = np.clip(activity_val, 0.0, 1.0)
