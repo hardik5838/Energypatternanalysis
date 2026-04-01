@@ -417,7 +417,7 @@ def show_nilm_page(df_consumo, df_clima):
         
         st.divider()
         st.header("3. Variable Processes")
-        o_kw, o_s, o_e, o_ru, o_rd, o_nom, o_res = render_standard_controls("occ", "Occupancy", 10.0, (7, 15))
+        o_kw, o_s, o_e, o_ru, o_rd, o_nom, o_res = render_standard_controls("occ", "Occupancy", 15.0, (7, 15))
         occ_dips = render_dips_ui("occ")
         
     # --- PROCESSING ---
