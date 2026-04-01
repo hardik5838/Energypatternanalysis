@@ -88,46 +88,36 @@ def simulate_physics_strategy(df_sim, config):
 
 def generate_load_curve(hours, start, end, max_kw, ramp_up, ramp_down, nominal_pct=1.0, residual_pct=0.0, dips=None):
     """
-    Generates a load curve with ramps, hourly dips, nominal scaling, and residual consumption.
+    Generates a load curve using Logistic Growth and Exponential Decay.
     """
     if dips is None: dips = []
-    
     curve = np.zeros(len(hours))
     
     for i, h in enumerate(hours):
-        activity_val = 0.0
-        # Basic Window Logic handling overnight schedules
-        is_active = False
-        if start <= end:
-            if start <= h < end: is_active = True
-        else: # Overnight
-            if h >= start or h < end: is_active = True
-
-        if is_active:
-            activity_val = 1.0
-            
-            # Ramp Up
-            # Note: Ramps are simplified for cyclic days to avoid complexity at midnight crossover in this version
-        if ramp_up > 0 and h >= start:
-            # Logistic growth for start-up
-            return 1 / (1 + np.exp(-10 * (h - (start + ramp_up/2)) / ramp_up))
+        # --- FIXED LOGIC ---
+        # 1. Start-up phase (Logistic)
+        if start <= h < end:
+            if ramp_up > 0:
+                activity_val = 1 / (1 + np.exp(-10 * (h - (start + ramp_up/2)) / ramp_up))
+            else:
+                activity_val = 1.0
         
-        if ramp_down > 0 and h >= end:
-            # Exponential decay for shut-down (Newton's cooling law)
-            # k = 3 / ramp_down ensures 95% drop within the ramp window
-            return np.exp(-(3 / ramp_down) * (h - end))
-
-        return 1.0 if start <= h < end else 0.0    
-            # Apply Dips
-        for dip in dips:
-            if int(h) == int(dip['hour']):
-                factor = 1.0 - (dip['percent'] / 100.0)
-                activity_val *= factor
+        # 2. Shutdown phase (Exponential Decay)
+        elif h >= end and ramp_down > 0:
+            activity_val = np.exp(-(3.0 / ramp_down) * (h - end))
         
-        # Clip activity
+        # 3. Outside of operating hours
+        else:
+            activity_val = 0.0
+
+        # Apply Dips (only while active)
+        if start <= h < end:
+            for dip in dips:
+                if int(h) == int(dip['hour']):
+                    activity_val *= (1.0 - (dip['percent'] / 100.0))
+        
+        # Final Clipping and Scaling
         activity_val = np.clip(activity_val, 0.0, 1.0)
-        
-        # Apply Scaling
         val = residual_pct + activity_val * (nominal_pct - residual_pct)
         curve[i] = val * max_kw
         
@@ -171,28 +161,38 @@ def run_simulation(df_avg, config):
         config.get('light_nom', 1.0), config.get('light_res', 0.0)
     )
 
-    # 4. HVAC (Thermodynamic Model)
-    # Using Heating logic (Load increases as Temp drops below setpoint)
-    # For cooling dominance, this logic flips. Simplified here for universal use.
+# 4. HVAC (Thermodynamic Model)
+    # delta_T captures the thermal gradient; total_thermal_load is the physical demand.
     delta_T = np.abs(config['hvac_setpoint'] - df['temperatura_c'])
     q_transmission = (config['hvac_ua'] / 1000.0) * delta_T
     total_thermal_load = q_transmission + config['hvac_q_int'] + config['hvac_q_sol'] + config['hvac_q_vent']
     
-    hvac_avail = generate_load_curve(hours, config['hvac_s'], config['hvac_e'], 1.0, 
-                                     config['hvac_ru'], config['hvac_rd'], 
-                                     1.0, config['hvac_res'])
+    # Generate the physical availability multiplier using the new physics ramp
+    hvac_phys_factor = np.array([
+        get_physics_ramp(h, config['hvac_s'], config['hvac_e'], config['hvac_ru'], config['hvac_rd']) 
+        for h in hours
+    ])
     
+    # Calculate base electrical consumption and apply the ramp
     hvac_electrical_raw = (total_thermal_load / max(0.1, config['hvac_cop']))
-    df['sim_therm'] = np.clip(hvac_electrical_raw, 0, config['hvac_cap_max']) * hvac_avail
+    
+    # sim_therm = Constant Residual + (Variable Thermal Load capped by Capacity * Physics Ramp)
+    df['sim_therm'] = (config['hvac_res'] * config['hvac_cap_max']) + \
+                      (np.clip(hvac_electrical_raw, 0, config['hvac_cap_max']) * hvac_phys_factor)
 
     # 5. Occupancy
+    # Updated to use the physics-based generate_load_curve (which now includes the fixed loop)
     df['sim_occ'] = generate_load_curve(
-        hours, config['occ_s'], config['occ_e'], config['occ_kw'],
-        config.get('occ_ru', 1), config.get('occ_rd', 1),
-        config.get('occ_nom', 1.0), config.get('occ_res', 0.0),
+        hours, 
+        config['occ_s'], 
+        config['occ_e'], 
+        config['occ_kw'],
+        config.get('occ_ru', 1.0), 
+        config.get('occ_rd', 1.5), # Slightly longer decay for human exit patterns
+        config.get('occ_nom', 1.0), 
+        config.get('occ_res', 0.0),
         config.get('occ_dips', [])
     )
-
 
     # Total Sum
     cols_to_sum = ['sim_base', 'sim_vent', 'sim_light', 'sim_therm', 'sim_occ']
