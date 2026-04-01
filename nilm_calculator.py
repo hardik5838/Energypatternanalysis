@@ -234,7 +234,7 @@ def run_optimizer(df_avg, m):
         (m['hvac_therm_kw']/4, m['hvac_therm_kw']/2), # 5: HVAC Elec Max
         (4, 10),                              # 6: HVAC Start
         (16, 24),                             # 7: HVAC End
-        (m['ua']*0.8, m['ua']*2)            # 8: UA Heat Loss
+        (m['ua']*0.8, m['ua']*1.2)            # 8: UA Heat Loss
     ]
     
     def obj(p, d):
