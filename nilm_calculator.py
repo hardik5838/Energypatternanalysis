@@ -174,7 +174,7 @@ def run_simulation(df_avg, config):
     df['sim_light'] = generate_load_curve(
         hours, config['light_s'], config['light_e'], 
         config['light_kw'], config.get('light_ru', 0.5), config.get('light_rd', 0.5),
-        config.get('light_nom', 1.0), config.get('light_res', 0.0)
+        config.get('light_nom', 0.7), config.get('light_res', 0.3)
     )
 
 # 4. HVAC (Thermodynamic Model)
