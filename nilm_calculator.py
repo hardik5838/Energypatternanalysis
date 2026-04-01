@@ -229,7 +229,7 @@ def run_optimizer(df_avg, m):
         (0, max_load * 0.25),                  # 0: Base Load kW
         (m['vent_kw']*0.5, m['vent_kw']*1),   # 1: Vent kW
         (8,11),                               # 2: Vent Start
-        (m['light_kw']*0.7, m['light_kw']*1.3), # 3: Light kW
+        (m['light_kw']*0.9, m['light_kw']*1.1), # 3: Light kW
         (17, 24),                             # 4: Light End
         (m['hvac_therm_kw']/4, m['hvac_therm_kw']/2), # 5: HVAC Elec Max
         (4, 10),                              # 6: HVAC Start
