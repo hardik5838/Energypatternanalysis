@@ -178,33 +178,30 @@ def run_simulation(df_avg, config):
     )
 
 # 4. HVAC (Thermodynamic Model)
-    # delta_T captures the thermal gradient; total_thermal_load is the physical demand.
     delta_T = np.abs(config['hvac_setpoint'] - df['temperatura_c'])
     q_transmission = (config['hvac_ua'] / 1000.0) * delta_T
     total_thermal_load = q_transmission + config['hvac_q_int'] + config['hvac_q_sol'] + config['hvac_q_vent']
     
-    # Generate the physical availability multiplier using the new physics ramp
+    # This calls the function defined above
     hvac_phys_factor = np.array([
         get_physics_ramp(h, config['hvac_s'], config['hvac_e'], config['hvac_ru'], config['hvac_rd']) 
         for h in hours
     ])
     
-    # Calculate base electrical consumption and apply the ramp
-    hvac_electrical_raw = (total_thermal_load / max(0.1, config['hvac_cop']))
+    hvac_elec_demand = (total_thermal_load / max(0.1, config['hvac_cop']))
     
-    # sim_therm = Constant Residual + (Variable Thermal Load capped by Capacity * Physics Ramp)
+    # Apply capacity limit and the decay factor
     df['sim_therm'] = (config['hvac_res'] * config['hvac_cap_max']) + \
-                      (np.clip(hvac_electrical_raw, 0, config['hvac_cap_max']) * hvac_phys_factor)
+                      (np.clip(hvac_elec_demand, 0, config['hvac_cap_max']) * hvac_phys_factor)
 
-    # 5. Occupancy
-    # Updated to use the physics-based generate_load_curve (which now includes the fixed loop)
+# 5. Occupancy
     df['sim_occ'] = generate_load_curve(
         hours, 
         config['occ_s'], 
         config['occ_e'], 
         config['occ_kw'],
         config.get('occ_ru', 1.0), 
-        config.get('occ_rd', 1.5), # Slightly longer decay for human exit patterns
+        config.get('occ_rd', 1.5), # Mathematical ramp-down
         config.get('occ_nom', 1.0), 
         config.get('occ_res', 0.0),
         config.get('occ_dips', [])
