@@ -10,7 +10,23 @@ from scipy.optimize import differential_evolution
 # 1. LOGIC ENGINE (Helper Functions)
 # ==========================================
 
-
+def get_physics_ramp(h, start, end, ramp_up, ramp_down):
+    """Calculates Logistic Growth for start and Exponential Decay for end."""
+    # Active Operating Window
+    if start <= h < end:
+        if ramp_up > 0:
+            # Logistic growth: reaches ~95% at start + ramp_up
+            return 1 / (1 + np.exp(-10 * (h - (start + ramp_up/2)) / ramp_up))
+        return 1.0
+    
+    # Shutdown / Decay Window (The "Medical Math" part)
+    if h >= end and ramp_down > 0:
+        # Exponential decay: Newton's Law of Cooling
+        # 3.0 constant ensures nearly 95% drop within the ramp_down duration
+        return np.exp(-(3.0 / ramp_down) * (h - end))
+    
+    return 0.0
+    
 def estimate_medical_office_metrics(total_annual_kwh):
     """
     Estimates building parameters based on typical medical office benchmarks.
