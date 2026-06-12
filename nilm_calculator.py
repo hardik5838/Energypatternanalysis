@@ -57,15 +57,12 @@ def estimate_medical_office_metrics(total_annual_kwh):
     }
 
 def simulate_physics_strategy(df_sim, config):
-    """
-    Executes Level Tier 1: Rule-Based Heuristic Pre-cooling (Glider Theory) [cite: 282, 283]
-    using calibrated live digital twin configurations.
-    """
     df = df_sim.copy()
     
-    # Prices (Spain PVPC Approx) [cite: 289]
+    # Prices (Spain PVPC Approx)
     prices = {"P1": 0.30, "P2": 0.18, "P3": 0.10}
     
+    # 1. Calculate Baseline Costs
     def get_price(h):
         if 10 <= h < 14 or 18 <= h < 22: return prices["P1"]
         if 8 <= h < 10 or 14 <= h < 18 or 22 <= h < 24: return prices["P2"]
@@ -74,47 +71,33 @@ def simulate_physics_strategy(df_sim, config):
     df['price_kwh'] = df['hora'].apply(get_price)
     df['cost_baseline'] = df['sim_total'] * df['price_kwh']
     
-    # 1. DYNAMIC RISE RATE & LAUNCHPOINT GLIDER CALCULATIONS
-    # Safe fallback configuration harvesting
-    hvac_setpoint = config.get('hvac_setpoint', config.get('hvac_set', 22.0))
-    t_comfort_max = min(27.0, hvac_setpoint + 4.0) # Maximum legally mandated comfort ceiling in Spain [cite: 288]
-    hours_of_p1 = 4.0 # 10:00 - 14:00 [cite: 289]
+    rise_rate = 1.6  # should be dynamic , NEEDS TO BE IMPROVED
+    hours_of_p1 = 4 
+    target_launch_temp = 27.0 - (hours_of_p1 * rise_rate) # a constraint of no less tahn 20 is needed 
     
-    # Structural load calculations [cite: 290]
-    building_capacitance = config.get('hvac_ua', 1200.0) / 7.0 
-    r_drift = max(0.5, min(3.0, (config.get('hvac_q_int', 10.0) + 5.0) / (building_capacitance + 0.1))) [cite: 290]
-    
-    # Formula (1): Glider Launch Window Target [cite: 284, 285]
-    target_launch_temp = t_comfort_max - (hours_of_p1 * r_drift) [cite: 284, 285]
-    target_launch_temp = max(target_launch_temp, 19.0) # Pre-cool Safety Floor Constraint [cite: 293]
-    
-    # 2. RUN SHIFT LOGIC ACROSS REAL DATASTREAMS
+    # 3. Apply the Shift Logic
     df['sim_optimized'] = df['sim_total']
     
-    # MASK 1: The P1 Peak Shutdown (10:00 - 14:00) -> Cut Compressor completely! [cite: 289, 292]
+    # MASK 1: The P1 Shutdown (10:00 - 14:00)
     p1_mask = (df['hora'] >= 10) & (df['hora'] < 14)
+    energy_removed_from_p1 = df.loc[p1_mask, 'sim_therm'].sum()
     df.loc[p1_mask, 'sim_optimized'] -= df.loc[p1_mask, 'sim_therm']
     
-    # MASK 2: The P3 Pre-cool Thermal Charging Window (04:00 - 09:00) [cite: 284]
+    # MASK 2: The P3 Precool (04:00 - 09:00)
     p3_mask = (df['hora'] >= 4) & (df['hora'] < 9)
-    current_avg_temp = df.loc[p3_mask, 'temperatura_c'].mean() if 'temperatura_c' in df.columns else 22.0
-    degrees_to_drop = max(0.0, current_avg_temp - target_launch_temp)
+    # Estimate thermal mass (Capacitance) from UA
+    mass_kwh_per_k = config['hvac_ua'] / 7
     
-    hvac_cop = max(1.0, config.get('hvac_cop', 3.5))
-    thermal_energy_needed = degrees_to_drop * building_capacitance
-    electrical_energy_to_add = thermal_energy_needed / hvac_cop
+    # Degrees we need to drop the building to reach the 'Launch Temp'
+    # Defaulting to 22C start if temp data is messy
+    current_avg_temp = df.loc[p3_mask, 'temperatura_c'].mean() if not df.empty else 22.0
+    degrees_to_drop = max(0, current_avg_temp - target_launch_temp)
+    energy_to_add_p3 = degrees_to_drop * mass_kwh_per_k
     
-    max_allowable_charge_per_hour = config.get('hvac_cap_max', 35.0)
-    hourly_pre_cool_injection = min(max_allowable_charge_per_hour, (electrical_energy_to_add / 5.0))
+    # Distribute the precooling energy over the 5-hour P3 window
+    df.loc[p3_mask, 'sim_optimized'] += (energy_to_add_p3 / 5)
     
-    # Valley Filling [cite: 472]
-    df.loc[p3_mask, 'sim_optimized'] += hourly_pre_cool_injection
-    
-    # Contracted Power Limit Threshold safeguard [cite: 326, 327]
-    if 'hvac_cap_max' in config:
-        df['sim_optimized'] = np.clip(df['sim_optimized'], 0, config['hvac_cap_max'] + config.get('base_kw', 20.0))
-    
-    # 4. FINAL FINANCIAL CONVERSION
+    # 4. Calculate Optimized Costs
     df['cost_optimized'] = df['sim_optimized'] * df['price_kwh']
     
     return df
@@ -450,14 +433,14 @@ def show_nilm_page(df_consumo, df_clima):
         'consumo_kwh': 'mean', 'temperatura_c': 'mean'
     }).reset_index().rename(columns={'fecha': 'hora'})
 
-config = {
+    config = {
         'base_kw': b_kw, 'base_ru': b_ru, 'base_rd': b_rd, 'base_nom': b_nom, 'base_res': b_res,
         'vent_kw': v_kw, 'vent_s': v_s, 'vent_e': v_e, 'vent_ru': v_ru, 'vent_rd': v_rd, 'vent_nom': v_nom, 'vent_res': v_res,
         'light_kw': l_kw, 'light_s': l_s, 'light_e': l_e, 'light_ru': l_ru, 'light_rd': l_rd, 'light_nom': l_nom, 'light_res': l_res,
         'hvac_s': h_s, 'hvac_e': h_e,
         'hvac_ua': h_ua,
         'hvac_cop': h_cop,
-        'hvac_setpoint': h_set,  # <--- CRITICAL: Ensure this is mapping to h_set!
+        'hvac_setpoint': h_set,
         'hvac_q_int': h_q_int,
         'hvac_q_sol': h_q_sol,
         'hvac_q_vent': h_q_vent,
@@ -589,6 +572,5 @@ if __name__ == "__main__":
     df_cons = pd.DataFrame({'fecha': dates, 'consumo_kwh': np.abs(total_load + np.random.normal(0, 5, len(dates)))})
     df_clim = pd.DataFrame({'fecha': dates, 'temperatura_c': 15 + 10 * np.sin(np.linspace(0, 6, len(dates)))})
     show_nilm_page(df_cons, df_clim)
-
 
 
