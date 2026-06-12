@@ -57,9 +57,13 @@ def estimate_medical_office_metrics(total_annual_kwh):
     }
 
 def simulate_physics_strategy(df_sim, config):
+    """
+    Executes Level Tier 1: Rule-Based Heuristic Pre-cooling (Glider Theory) [cite: 281, 282]
+    using the calibrated physical variables straight from the Oasis digital twin config[cite: 284].
+    """
     df = df_sim.copy()
     
-    # Prices (Spain PVPC Approx)
+    # Prices (Spain PVPC Approx) [cite: 156]
     prices = {"P1": 0.30, "P2": 0.18, "P3": 0.10}
     
     # 1. Calculate Baseline Costs
@@ -71,37 +75,55 @@ def simulate_physics_strategy(df_sim, config):
     df['price_kwh'] = df['hora'].apply(get_price)
     df['cost_baseline'] = df['sim_total'] * df['price_kwh']
     
-    rise_rate = 1.6  # should be dynamic , NEEDS TO BE IMPROVED
-    hours_of_p1 = 4 
-    target_launch_temp = 27.0 - (hours_of_p1 * rise_rate) # a constraint of no less tahn 20 is needed 
+    # 2. DYNAMIC RISE RATE & LAUNCHPOINT GLIDER CALCULATIONS [cite: 283, 290]
+    # Maximum legally mandated thermal comfort constraint in Spain [cite: 288]
+    t_comfort_max = 27.0 
+    hours_of_p1 = 4.0 # Duration of P1 peak window (10:00 - 14:00) [cite: 289]
     
-    # 3. Apply the Shift Logic
+    # Safely extract thermal parameters from config with safe runtime fallbacks
+    hvac_ua = config.get('hvac_ua', 1200.0)
+    hvac_cap_max = config.get('hvac_cap_max', 35.0)
+    cop = max(1.0, config.get('hvac_cop', 3.5))
+    q_int = config.get('hvac_q_int', 10.0)
+    
+    # Estimate building thermal capacitance (thermal mass) relative to insulation layer [cite: 317]
+    # Using your thesis core factor mapping logic:
+    building_capacitance = hvac_ua / 7.0 
+    
+    # Calculate an adaptive rise rate (R_drift) based on thermal gain vs mass ratio [cite: 290]
+    r_drift = max(0.5, min(3.0, (q_int + 5.0) / (building_capacitance + 0.1))) 
+    
+    # Formula (1): Calculate structural target launch temperature boundary [cite: 284, 285]
+    target_launch_temp = t_comfort_max - (hours_of_p1 * r_drift)
+    target_launch_temp = max(target_launch_temp, 19.0) # Enforce Pre-cool Safety Floor Constraint [cite: 293]
+    
+    # 3. APPLY TRUE PRE-COOL SHIFT LOGIC
     df['sim_optimized'] = df['sim_total']
     
-    # MASK 1: The P1 Shutdown (10:00 - 14:00)
+    # MASK 1: The P1 Peak Shutdown (10:00 - 14:00) -> Completely lock out the HVAC vector [cite: 292]
     p1_mask = (df['hora'] >= 10) & (df['hora'] < 14)
-    energy_removed_from_p1 = df.loc[p1_mask, 'sim_therm'].sum()
+    # Remove ONLY the HVAC portion from the total consumption stack [cite: 265]
     df.loc[p1_mask, 'sim_optimized'] -= df.loc[p1_mask, 'sim_therm']
     
-    # MASK 2: The P3 Precool (04:00 - 09:00)
+    # MASK 2: The P3 Precool Valley Filling Window (04:00 - 09:00) [cite: 472]
     p3_mask = (df['hora'] >= 4) & (df['hora'] < 9)
-    # Estimate thermal mass (Capacitance) from UA
-    mass_kwh_per_k = config['hvac_ua'] / 7
     
-    # Degrees we need to drop the building to reach the 'Launch Temp'
-    # Defaulting to 22C start if temp data is messy
-    current_avg_temp = df.loc[p3_mask, 'temperatura_c'].mean() if not df.empty else 22.0
-    degrees_to_drop = max(0, current_avg_temp - target_launch_temp)
-    energy_to_add_p3 = degrees_to_drop * mass_kwh_per_k
+    # Quantify the exact thermal delta drop required to reach the glide launch point [cite: 284]
+    current_avg_temp = df.loc[p3_mask, 'temperatura_c'].mean() if 'temperatura_c' in df.columns else 22.0
+    degrees_to_drop = max(0.0, current_avg_temp - target_launch_temp)
     
-    # Distribute the precooling energy over the 5-hour P3 window
-    df.loc[p3_mask, 'sim_optimized'] += (energy_to_add_p3 / 5)
+    # Turn the physical temperature delta drop into actual required electrical power [cite: 270, 349]
+    thermal_energy_needed = degrees_to_drop * building_capacitance
+    electrical_energy_to_add = thermal_energy_needed / cop
     
-    # 4. Calculate Optimized Costs
+    # Distribute over the 5-hour valley charging window, bound strictly by infrastructure cap max [cite: 327]
+    hourly_pre_cool_injection = min(hvac_cap_max, (electrical_energy_to_add / 5.0))
+    df.loc[p3_mask, 'sim_optimized'] += hourly_pre_cool_injection
+    
+    # 4. CALCULATE TRUE FINANCIAL OPTIMIZED DEPLOYMENTS
     df['cost_optimized'] = df['sim_optimized'] * df['price_kwh']
     
     return df
-
 def generate_load_curve(hours, start, end, max_kw, ramp_up, ramp_down, nominal_pct=1.0, residual_pct=0.0, dips=None):
     """
     Generates a load curve using Logistic Growth and Exponential Decay.
