@@ -466,14 +466,14 @@ def show_nilm_page(df_consumo, df_clima):
         'consumo_kwh': 'mean', 'temperatura_c': 'mean'
     }).reset_index().rename(columns={'fecha': 'hora'})
 
-    config = {
+config = {
         'base_kw': b_kw, 'base_ru': b_ru, 'base_rd': b_rd, 'base_nom': b_nom, 'base_res': b_res,
         'vent_kw': v_kw, 'vent_s': v_s, 'vent_e': v_e, 'vent_ru': v_ru, 'vent_rd': v_rd, 'vent_nom': v_nom, 'vent_res': v_res,
         'light_kw': l_kw, 'light_s': l_s, 'light_e': l_e, 'light_ru': l_ru, 'light_rd': l_rd, 'light_nom': l_nom, 'light_res': l_res,
         'hvac_s': h_s, 'hvac_e': h_e,
         'hvac_ua': h_ua,
         'hvac_cop': h_cop,
-        'hvac_setpoint': h_set,
+        'hvac_setpoint': h_set,  # <--- CRITICAL: Ensure this is mapping to h_set!
         'hvac_q_int': h_q_int,
         'hvac_q_sol': h_q_sol,
         'hvac_q_vent': h_q_vent,
